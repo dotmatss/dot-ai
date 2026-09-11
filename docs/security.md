@@ -49,47 +49,52 @@ Unknown or inaccessible workspaces return **404**, not 403, so their existence i
 Three paths let a customer choose an address our server will connect to: the
 knowledge URL importer, the integration connection tester, and the MCP client.
 A request that leaves from inside our network can reach things the browser
-never could — cloud metadata, internal admin panels, databases — so all three
+never could - cloud metadata, internal admin panels, databases - so all three
 go through one module, `src/server/http/egress-guard.ts`. It is the only place
-in `src/` that resolves DNS, classifies an address, or constructs an HTTP
-dispatcher, and a test asserts that count stays at one.
+in `src/` that resolves DNS or classifies an address, and a test asserts that
+count stays at one.
 
 Per request, and again for every redirect hop:
 
 1. Scheme, embedded credentials, port and literal-address policy. A caller may
    supply its own wording for these refusals, but the shared policy is applied
    as a floor and cannot be widened.
-2. The name is resolved once, and **every** returned address is checked. One
-   public and one private answer is a refusal, not a choice.
-3. The socket is **pinned** to the addresses just validated, via a per-request
-   `undici.Agent` whose `connect.lookup` returns them. The URL keeps the
-   original hostname, so TLS verification, SNI and the Host header are
-   unaffected — only the destination address is fixed.
-4. Redirects are followed manually so 1–3 apply to each hop; an open redirect
-   is the usual route to `169.254.169.254`.
-5. One wall-clock budget covers the whole exchange, and the response body is
+2. The name is resolved - both A and AAAA records - and **every** returned
+   address is checked. One public and one private answer is a refusal, not a
+   choice.
+3. Redirects are followed manually so 1 and 2 apply to each hop; an open
+   redirect is the usual route to `169.254.169.254`.
+4. One wall-clock budget covers the whole exchange, and the response body is
    size-capped (except `text/event-stream`, which is bounded by the clock
    instead, since its total size is not meaningful).
 
-Step 3 is what closes the window between checking a name and connecting to it.
-Without it, the HTTP client resolves the name a second time and that second
-answer decides the destination, so a resolver alternating a public and a
-private address walks through a check that only inspects the first answer. A
-dispatcher is built fresh per request and closed when the body is done:
-a pooled connection would outlive the check that authorised it.
+### The window this leaves open
 
-**What this does not claim.** Fixing the address is not protection against
-every network-level attack. It does nothing about hostility below DNS — ARP or
-BGP interference, a resolver that returns an attacker-controlled *public*
-address, or a proxy in front of us. For https it is TLS certificate
-verification, left at its default, that makes the pinned address prove its
-identity. If a forward proxy is ever introduced, it — not this — becomes the
-enforcement point; the two are alternatives, and claiming both would mean
-neither is authoritative.
+Step 2 validates a **name**. Step 3 connects by handing that same name to
+`fetch`, which resolves it again. The decision and the connection therefore
+rest on two separate DNS answers, and a resolver under an attacker's control
+can answer the first with a public address and the second with a private one.
+That is a time-of-check-to-time-of-use window, and **it is open**.
 
-IPv6 is supported: the resolver's address family travels to the socket, and a
-test connects over real IPv6 to `::1`. Whether outbound public IPv6 works at
-all is a property of the deployment network and has to be verified there.
+It was closed once. Phase 2a pinned each connection to the address that had
+just been validated, using a per-request `undici.Agent`. That was removed when
+the deployment target was set to Cloudflare Workers, which offers no way to fix
+a connection to a chosen address: the platform `fetch` is the runtime's own and
+takes no custom dispatcher. `dns.lookup()` is unavailable there too, which is
+why the guard uses `resolve4`/`resolve6`. The trade-off was made explicitly;
+see `docs/deployment.md` and phase 2a in `docs/mcp-phase2-gate.md`.
+
+What remains is real and is not nothing: the scheme and port policy, the
+refusal of private literals, the per-address check across both families, and
+the per-hop re-validation of redirects. The MCP specification's own guidance
+names this residual window and recommends combining DNS checks with other
+mitigations, which is what those layers are. But a determined attacker who
+controls DNS for a name a customer configured can still reach an internal
+address, and nothing below the application layer currently stops them.
+
+**Also not claimed.** Fixing this at the application layer is not the only
+option: a forward proxy that enforces the policy, or running on a runtime where
+the socket can be pinned, would both close it. Neither is in place.
 
 ## Tools that actually run
 

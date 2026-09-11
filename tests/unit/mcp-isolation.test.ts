@@ -113,14 +113,27 @@ describe("MCP egress isolation", () => {
     expect(guard).toMatch(/await assertPublicDestination\(/);
   });
 
-  it("pins the socket to the address it validated", () => {
+  it("validates the destination but does not pin the connection", () => {
     const guard = read("src/server/http/egress-guard.ts");
-    // Validating a name and then handing the name to the HTTP client leaves the
-    // connection free to land on a different address. The dispatcher is what
-    // fixes it, and it must be built per request rather than shared.
-    expect(guard).toMatch(/dispatcher:\s*pin\.agent/);
-    expect(guard).toMatch(/const pin = pinTo\(destination\.addresses\)/);
-    expect(guard).toMatch(/new Agent\(\{ connect: \{ lookup: pinnedLookup \} \}\)/);
+
+    // Pinning was removed when the deployment target became Cloudflare
+    // Workers, which offers no way to fix a connection to a chosen address.
+    // The time-of-check-to-time-of-use window is therefore open, by decision.
+    // These assertions exist so the decision cannot be reversed by accident in
+    // either direction: the limitation stays documented where the code is, and
+    // `dns.lookup` (which throws on Workers) stays out.
+    expect(guard).toMatch(/KNOWN LIMITATION: the destination is validated, not pinned/);
+    expect(guard).toContain("docs/deployment.md");
+
+    // Asserted against the code with its comments stripped: those comments
+    // name `undici` and `dns.lookup` precisely because neither may be used
+    // here, so a naive substring check would match the explanation.
+    const code = guard.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toContain('from "undici"');
+    expect(code).not.toContain("new Agent(");
+    expect(code).not.toContain("dns.lookup");
+    // And the positive half: the Workers-compatible record queries.
+    expect(code).toContain("resolve4");
   });
 
   it("keeps one implementation of the private-address check", () => {
@@ -145,7 +158,9 @@ describe("MCP egress isolation", () => {
     const importing = (pattern: RegExp) => all.filter((file) => pattern.test(read(file)));
 
     expect(importing(/from "node:dns/)).toEqual(["src/server/http/egress-guard.ts"]);
-    expect(importing(/from "undici"/)).toEqual(["src/server/http/egress-guard.ts"]);
+    // Nothing may import undici: it cannot run on the Workers runtime, and a
+    // second HTTP client would be a second egress path.
+    expect(importing(/from "undici"/)).toEqual([]);
     expect(importing(/isBlockedIpAddress/)).toEqual([
       "src/features/knowledge/url-safety.ts",
       "src/server/http/egress-guard.ts",

@@ -1,84 +1,46 @@
 // @vitest-environment node
 import { createHmac } from "node:crypto";
-import { lookup } from "node:dns/promises";
+import { resolve4, resolve6 } from "node:dns/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // DNS and the network are stubbed so these assertions are about the guards, not
 // about the machine's network. Every case below would otherwise leave the
-// process. undici is mocked at the module level because delivery now goes
-// through the shared egress guard, which dispatches through undici so the
-// socket can be pinned to the address that was checked.
-vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
-
-interface PinnedAddress {
-  address: string;
-  family: number;
-}
-
-type PinnedLookup = (
-  hostname: string,
-  options: { all: boolean },
-  callback: (error: Error | null, addresses: PinnedAddress[]) => void,
-) => void;
-
-interface FakeAgent {
-  options: { connect: { lookup: PinnedLookup } };
-  close: () => Promise<void>;
-}
-
-const undiciFetch = vi.hoisted(() => vi.fn());
-
-vi.mock("undici", () => ({
-  Agent: class {
-    readonly options: { connect: { lookup: PinnedLookup } };
-    constructor(options: { connect: { lookup: PinnedLookup } }) {
-      this.options = options;
-    }
-    close(): Promise<void> {
-      return Promise.resolve();
-    }
-  },
-  fetch: undiciFetch,
-}));
+// process. Delivery goes through the shared egress guard, which validates the
+// resolved addresses and then connects by name - see the known limitation in
+// that module and docs/deployment.md.
+vi.mock("node:dns/promises", () => ({ resolve4: vi.fn(), resolve6: vi.fn() }));
 
 const { postTestPayload, signPayload } = await import("@/features/integrations/server/connection-test");
 
-const mockedLookup = vi.mocked(lookup);
-
-type FetchInit = { dispatcher?: FakeAgent } & Record<string, unknown>;
-
-/** What the socket would have connected to, per request. */
-let pins: PinnedAddress[][];
+const mockedResolve4 = vi.mocked(resolve4);
+const mockedResolve6 = vi.mocked(resolve6);
+const fetchMock = vi.fn<typeof fetch>();
 
 function resolvesTo(address: string) {
-  mockedLookup.mockResolvedValue([{ address, family: address.includes(":") ? 6 : 4 }] as never);
+  mockedResolve4.mockResolvedValue(address.includes(":") ? [] : [address]);
+  mockedResolve6.mockResolvedValue(address.includes(":") ? [address] : []);
 }
 
 function redirectTo(location: string): Response {
   return new Response(null, { status: 302, headers: { location } });
 }
 
-/** Stands in for opening the socket: a real connection asks the dispatcher where to go. */
+/** Answers each request in turn, repeating the last response thereafter. */
 function serves(...responses: Response[]) {
   let index = 0;
-  undiciFetch.mockImplementation(async (url: string | URL, init: FetchInit) => {
-    const pinnedLookup = init.dispatcher?.options?.connect?.lookup;
-    if (pinnedLookup) {
-      pinnedLookup(new URL(String(url)).hostname, { all: true }, (_error, addresses) => {
-        pins.push(addresses);
-      });
-    }
+  fetchMock.mockImplementation(async () => {
     const response = responses[Math.min(index, responses.length - 1)];
     index += 1;
-    return response;
+    return response as Response;
   });
 }
 
 beforeEach(() => {
-  mockedLookup.mockReset();
-  undiciFetch.mockReset();
-  pins = [];
+  mockedResolve4.mockReset();
+  mockedResolve6.mockReset();
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
@@ -91,8 +53,8 @@ describe("postTestPayload destination policy", () => {
       const result = await postTestPayload({ url, body: {} });
       expect(result.ok, url).toBe(false);
     }
-    expect(undiciFetch).not.toHaveBeenCalled();
-    expect(mockedLookup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockedResolve4).not.toHaveBeenCalled();
   });
 
   it("refuses a public name that resolves to a private address", async () => {
@@ -101,29 +63,28 @@ describe("postTestPayload destination policy", () => {
     const result = await postTestPayload({ url: "https://metadata.example.com/", body: {} });
     expect(result.ok).toBe(false);
     expect(result.message).toContain("private address");
-    expect(undiciFetch).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses a host that does not resolve", async () => {
-    mockedLookup.mockRejectedValue(new Error("ENOTFOUND"));
+    mockedResolve4.mockRejectedValue(new Error("ENOTFOUND"));
+    mockedResolve6.mockRejectedValue(new Error("ENOTFOUND"));
     const result = await postTestPayload({ url: "https://nope.example.com/", body: {} });
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Could not resolve");
   });
 
-  it("delivers to the address it validated, not to a second resolution", async () => {
-    // The same protection the MCP client gets: this path is customer-controlled
-    // too, so it must not be left behind with the old window open.
-    mockedLookup
-      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "169.254.169.254", family: 4 }] as never);
-    serves(new Response(null, { status: 200 }));
+  it("checks both address families before sending anything", async () => {
+    // A public A record and a private AAAA record is the same trick played
+    // across families; either answer could be the one connected to.
+    mockedResolve4.mockResolvedValue(["93.184.216.34"]);
+    mockedResolve6.mockResolvedValue(["fd00::1"]);
 
     const result = await postTestPayload({ url: "https://hooks.example.com/x", body: {} });
 
-    expect(result.ok).toBe(true);
-    expect(pins).toEqual([[{ address: "93.184.216.34", family: 4 }]]);
-    expect(mockedLookup).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("private address");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reports success for a 2xx and failure for an error status", async () => {
@@ -152,10 +113,8 @@ describe("postTestPayload destination policy", () => {
     serves(redirectTo("https://hooks.example.org/moved"), new Response(null, { status: 200 }));
     const result = await postTestPayload({ url: "https://hooks.example.com/x", body: {} });
     expect(result.ok).toBe(true);
-    // Two hops, two DNS checks: the second host is never taken on trust, and
-    // each hop gets its own pin.
-    expect(mockedLookup).toHaveBeenCalledTimes(2);
-    expect(pins).toHaveLength(2);
+    // Two hops, two DNS checks: the second host is never taken on trust.
+    expect(mockedResolve4).toHaveBeenCalledTimes(2);
   });
 
   it("gives up rather than following redirects forever", async () => {
@@ -192,11 +151,11 @@ describe("postTestPayload destination policy", () => {
     serves(new Response(null, { status: 200 }));
 
     await postTestPayload({ url: "https://hooks.example.com/x", body: { a: 1 } });
-    const unsigned = undiciFetch.mock.calls[0]?.[1] as FetchInit;
+    const unsigned = fetchMock.mock.calls[0]?.[1];
     expect((unsigned?.headers as Record<string, string>)["X-Dot-Signature"]).toBeUndefined();
 
     await postTestPayload({ url: "https://hooks.example.com/x", body: { a: 1 }, signingSecret: "whsec" });
-    const signed = undiciFetch.mock.calls[1]?.[1] as FetchInit;
+    const signed = fetchMock.mock.calls[1]?.[1];
     const header = (signed?.headers as Record<string, string>)["X-Dot-Signature"];
     expect(header).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
     // The secret itself must never travel in a header.

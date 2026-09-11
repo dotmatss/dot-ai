@@ -75,7 +75,7 @@ Customer's application ──▶ our API          /api/v1/public/chat        the
 our Agent ──▶ MCP client ──▶ customer's MCP server                     we authenticate to them
 ```
 
-The inbound direction is authenticated by a workspace API key and bounded by rate limits. The outbound direction is the MCP feature: Streamable HTTP over HTTPS only, credentials sealed with a workspace-bound key, every request through the shared egress guard, which pins the connection to the address it validated, and every tool approved by a person and pinned to the definition they approved. MCP tool calls **do** execute, and they are the only tool path that does: every call is re-checked at the point of use, recorded in `mcp_tool_calls` (refusals included), and anything classified destructive waits in an approvals queue for a person. The six built-in agent tools remain simulated. See `docs/mcp-evaluation.md`.
+The inbound direction is authenticated by a workspace API key and bounded by rate limits. The outbound direction is the MCP feature: Streamable HTTP over HTTPS only, credentials sealed with a workspace-bound key, every request through the shared egress guard, and every tool approved by a person and pinned to the definition they approved. MCP tool calls **do** execute, and they are the only tool path that does: every call is re-checked at the point of use, recorded in `mcp_tool_calls` (refusals included), and anything classified destructive waits in an approvals queue for a person. The six built-in agent tools remain simulated. See `docs/mcp-evaluation.md`.
 
 ## Domain model
 
