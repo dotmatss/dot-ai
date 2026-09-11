@@ -36,7 +36,7 @@ export const CAPABILITIES: Capability[] = [
     eyebrow: "Chatbots",
     title: "Ship a grounded chatbot in an afternoon",
     description:
-      "Write the instructions, attach a knowledge base, try it in the playground, then publish. Replies stream token by token and cite the sources they used.",
+      "Write the instructions, attach a collection, try it in the playground, then publish. Replies stream token by token and cite the sources they used.",
     icon: Bot,
     span: 3,
     tall: true,
@@ -70,7 +70,7 @@ export const CAPABILITIES: Capability[] = [
       "Add text, a URL or a file. Watch it move through ingestion, chunking, embedding and indexing, then test retrieval before a chatbot ever uses it.",
     icon: BookOpen,
     span: 2,
-    docsHref: "/docs/knowledge-base",
+    docsHref: "/docs/knowledge",
   },
   {
     key: "api",
@@ -149,7 +149,7 @@ export const JOURNEY: JourneyStep[] = [
   {
     step: "02",
     title: "Ground",
-    description: "Attach a knowledge base so answers come from your content, with citations back to the source.",
+    description: "Attach a collection so answers come from your content, with citations back to the source.",
   },
   {
     step: "03",

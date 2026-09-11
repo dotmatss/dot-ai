@@ -1,19 +1,24 @@
 import "server-only";
 
-import { lookup } from "node:dns/promises";
-
 import { extractHtmlTitle, htmlToText, looksLikeText } from "@/features/knowledge/html-text";
-import { checkIngestUrl, isBlockedIpAddress } from "@/features/knowledge/url-safety";
+import { checkIngestUrl } from "@/features/knowledge/url-safety";
 import { ApiError } from "@/lib/api/api-error";
+import { createGuardedFetch, EgressBlockedError } from "@/server/http/egress-guard";
 
 /**
  * Server-side fetch of a user-supplied URL.
  *
- * Every control here exists because the request originates inside our network:
- * scheme and host allow-lists, DNS-level address checks, a redirect budget with
- * a re-check on each hop, a wall-clock timeout, a response size cap and a
- * content-type allow-list. A failure is always an ApiError with a message the
- * user can act on.
+ * Every control here exists because the request originates inside our network.
+ * The network half of them - the scheme and host policy, the DNS-level address
+ * checks, pinning the socket to the validated address, the redirect budget with
+ * a re-check on each hop, the wall-clock timeout and the response size cap -
+ * belongs to the shared egress guard, so there is one implementation of it
+ * rather than a copy per caller. `checkIngestUrl` is handed to the guard so its
+ * refusals stay worded for someone importing a page.
+ *
+ * What remains here is what is specific to importing a document: the
+ * content-type allow-list, decoding and text extraction. A failure is always an
+ * ApiError with a message the user can act on.
  */
 
 export const FETCH_TIMEOUT_MS = 10_000;
@@ -29,33 +34,21 @@ const ALLOWED_CONTENT_TYPES = [
   "text/csv",
 ];
 
+const fetchGuarded = createGuardedFetch({
+  timeoutMs: FETCH_TIMEOUT_MS,
+  maxRedirects: MAX_REDIRECTS,
+  maxResponseBytes: MAX_RESPONSE_BYTES,
+  // `checkIngestUrl` permits http, and the address policy still applies to it.
+  requireHttps: false,
+  checkUrl: checkIngestUrl,
+});
+
 export interface FetchedDocument {
   text: string;
   title: string | null;
   finalUrl: string;
   contentType: string;
   byteLength: number;
-}
-
-/**
- * Rejects hostnames that resolve to a non-public address. Literal addresses are
- * already rejected by `checkIngestUrl`; this closes the gap where a public name
- * points at private space.
- */
-async function assertPublicHost(hostname: string): Promise<void> {
-  const host = hostname.replace(/^\[/, "").replace(/\]$/, "");
-  let addresses: Array<{ address: string }>;
-  try {
-    addresses = await lookup(host, { all: true, verbatim: true });
-  } catch {
-    throw ApiError.badRequest(`Could not resolve ${hostname}. Check the address and try again.`);
-  }
-  if (addresses.length === 0) {
-    throw ApiError.badRequest(`Could not resolve ${hostname}. Check the address and try again.`);
-  }
-  if (addresses.some((entry) => isBlockedIpAddress(entry.address))) {
-    throw ApiError.badRequest(`${hostname} resolves to a private address, which cannot be imported.`);
-  }
 }
 
 function normalizeContentType(header: string | null): string {
@@ -67,130 +60,98 @@ async function discard(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
 }
 
-/** Reads the body with a hard byte cap so a huge or endless response cannot exhaust memory. */
-async function readCapped(response: Response): Promise<Uint8Array> {
-  const declared = Number(response.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-    throw ApiError.badRequest(`That page is larger than ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB.`);
-  }
-  const body = response.body;
-  if (!body) return new Uint8Array();
-
-  const reader = body.getReader();
-  const parts: Uint8Array[] = [];
-  let total = 0;
+function hostOf(url: string): string | null {
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > MAX_RESPONSE_BYTES) {
-        throw ApiError.badRequest(`That page is larger than ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB.`);
-      }
-      parts.push(value);
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
+    return new URL(url).hostname;
+  } catch {
+    return null;
   }
+}
 
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    merged.set(part, offset);
-    offset += part.byteLength;
+/** Re-phrases a refusal from the shared guard for someone importing a page. */
+function ingestError(error: unknown, host: string): ApiError {
+  if (error instanceof ApiError) return error;
+  if (error instanceof EgressBlockedError) {
+    switch (error.kind) {
+      case "size":
+        return ApiError.badRequest(`That page is larger than ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB.`);
+      case "redirect-limit":
+        return ApiError.badRequest("That URL redirects too many times.");
+      case "redirect-location":
+        return ApiError.badRequest("The page returned a redirect without a destination.");
+      default:
+        // An open redirect is the usual way to smuggle a request to a private
+        // address past the first check, so say which half failed.
+        return ApiError.badRequest(
+          error.hop > 0 ? `That URL redirects to a location that cannot be imported. ${error.message}` : error.message,
+        );
+    }
   }
-  return merged;
+  if (error instanceof Error && error.name === "AbortError") {
+    return ApiError.badRequest(`${host} did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds.`);
+  }
+  return ApiError.badRequest(`Could not reach ${host}: ${error instanceof Error ? error.message : "request failed"}.`);
 }
 
 export async function fetchUrlDocument(rawUrl: string): Promise<FetchedDocument> {
   const initial = checkIngestUrl(rawUrl);
   if (!initial.ok) throw ApiError.badRequest(initial.reason);
 
-  const controller = new AbortController();
-  // One budget for the whole exchange, redirects included.
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
+  let response: Response;
   try {
-    let target = initial.url;
-    let response: Response | undefined;
-
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      await assertPublicHost(target.hostname);
-      let hopResponse: Response;
-      try {
-        hopResponse = await fetch(target, {
-          redirect: "manual",
-          signal: controller.signal,
-          headers: {
-            Accept: "text/html, text/plain, text/markdown, application/xhtml+xml;q=0.9, */*;q=0.1",
-            "User-Agent": "dot-knowledge-importer/1.0",
-          },
-        });
-      } catch (error) {
-        if (controller.signal.aborted) {
-          throw ApiError.badRequest(`${target.hostname} did not respond within ${FETCH_TIMEOUT_MS / 1000} seconds.`);
-        }
-        throw ApiError.badRequest(`Could not reach ${target.hostname}: ${error instanceof Error ? error.message : "request failed"}.`);
-      }
-
-      const isRedirect = hopResponse.status >= 300 && hopResponse.status < 400;
-      if (!isRedirect) {
-        response = hopResponse;
-        break;
-      }
-
-      const location = hopResponse.headers.get("location");
-      await discard(hopResponse);
-      if (!location) throw ApiError.badRequest("The page returned a redirect without a destination.");
-      if (hop === MAX_REDIRECTS) throw ApiError.badRequest("That URL redirects too many times.");
-
-      // Re-validate the destination: an open redirect is the usual way to
-      // smuggle a request to a private address past the first check.
-      const next = checkIngestUrl(new URL(location, target).href);
-      if (!next.ok) throw ApiError.badRequest(`That URL redirects to a location that cannot be imported. ${next.reason}`);
-      target = next.url;
-    }
-
-    if (!response) throw ApiError.badRequest("That URL redirects too many times.");
-
-    if (!response.ok) {
-      await discard(response);
-      throw ApiError.badRequest(`${target.hostname} returned HTTP ${response.status}.`);
-    }
-
-    // An unknown or missing type is refused rather than sniffed: a PDF or an
-    // archive would otherwise be indexed as unreadable bytes.
-    const contentType = normalizeContentType(response.headers.get("content-type"));
-    if (!ALLOWED_CONTENT_TYPES.includes(contentType)) {
-      await discard(response);
-      throw ApiError.badRequest(
-        `That URL serves “${contentType || "no content type"}”. Only HTML and plain text pages can be imported.`,
-      );
-    }
-
-    const bytes = await readCapped(response);
-    if (bytes.byteLength === 0) throw ApiError.badRequest("That page returned no content.");
-
-    // Charset detection is out of scope: the modern web is UTF-8 and a
-    // mis-decoded page is caught by the text check below.
-    const decoded = new TextDecoder("utf-8").decode(bytes);
-    if (!looksLikeText(decoded)) {
-      throw ApiError.badRequest("That URL does not serve readable UTF-8 text.");
-    }
-
-    const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml" || /<html[\s>]/i.test(decoded);
-    const text = isHtml ? htmlToText(decoded) : decoded;
-    if (!text.trim()) throw ApiError.badRequest("No readable text could be extracted from that page.");
-
-    return {
-      text,
-      title: isHtml ? extractHtmlTitle(decoded) : null,
-      finalUrl: target.href,
-      contentType: contentType || "text/plain",
-      byteLength: bytes.byteLength,
-    };
-  } finally {
-    clearTimeout(timer);
+    response = await fetchGuarded(initial.url, {
+      headers: {
+        Accept: "text/html, text/plain, text/markdown, application/xhtml+xml;q=0.9, */*;q=0.1",
+        "User-Agent": "dot-knowledge-importer/1.0",
+      },
+    });
+  } catch (error) {
+    throw ingestError(error, initial.url.hostname);
   }
+
+  const finalUrl = response.url || initial.url.href;
+  const host = hostOf(finalUrl) ?? initial.url.hostname;
+
+  if (!response.ok) {
+    await discard(response);
+    throw ApiError.badRequest(`${host} returned HTTP ${response.status}.`);
+  }
+
+  // An unknown or missing type is refused rather than sniffed: a PDF or an
+  // archive would otherwise be indexed as unreadable bytes.
+  const contentType = normalizeContentType(response.headers.get("content-type"));
+  if (!ALLOWED_CONTENT_TYPES.includes(contentType)) {
+    await discard(response);
+    throw ApiError.badRequest(
+      `That URL serves “${contentType || "no content type"}”. Only HTML and plain text pages can be imported.`,
+    );
+  }
+
+  // The guard caps the body as it streams, so reading it whole is bounded.
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    throw ingestError(error, host);
+  }
+  if (bytes.byteLength === 0) throw ApiError.badRequest("That page returned no content.");
+
+  // Charset detection is out of scope: the modern web is UTF-8 and a
+  // mis-decoded page is caught by the text check below.
+  const decoded = new TextDecoder("utf-8").decode(bytes);
+  if (!looksLikeText(decoded)) {
+    throw ApiError.badRequest("That URL does not serve readable UTF-8 text.");
+  }
+
+  const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml" || /<html[\s>]/i.test(decoded);
+  const text = isHtml ? htmlToText(decoded) : decoded;
+  if (!text.trim()) throw ApiError.badRequest("No readable text could be extracted from that page.");
+
+  return {
+    text,
+    title: isHtml ? extractHtmlTitle(decoded) : null,
+    finalUrl,
+    contentType: contentType || "text/plain",
+    byteLength: bytes.byteLength,
+  };
 }

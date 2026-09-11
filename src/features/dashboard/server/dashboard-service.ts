@@ -122,16 +122,16 @@ export async function getChatbotPerformance(workspaceId: string, limit = 5): Pro
 export async function getKnowledgeStatus(workspaceId: string): Promise<KnowledgeStatusSummary> {
   const row = await queryOne<Record<string, string>>(
     `SELECT
-       (SELECT count(*) FROM knowledge_bases WHERE workspace_id = $1) AS kbs,
-       (SELECT count(*) FROM knowledge_bases WHERE workspace_id = $1 AND status = 'ready') AS ready,
-       (SELECT count(*) FROM knowledge_bases WHERE workspace_id = $1 AND status = 'processing') AS processing,
-       (SELECT count(*) FROM knowledge_bases WHERE workspace_id = $1 AND status = 'error') AS error,
+       (SELECT count(*) FROM knowledge_collections WHERE workspace_id = $1) AS kbs,
+       (SELECT count(*) FROM knowledge_collections WHERE workspace_id = $1 AND status = 'ready') AS ready,
+       (SELECT count(*) FROM knowledge_collections WHERE workspace_id = $1 AND status = 'processing') AS processing,
+       (SELECT count(*) FROM knowledge_collections WHERE workspace_id = $1 AND status = 'error') AS error,
        (SELECT count(*) FROM knowledge_sources WHERE workspace_id = $1) AS sources,
        (SELECT count(*) FROM knowledge_sources WHERE workspace_id = $1 AND status = 'ready') AS sources_ready`,
     [workspaceId],
   );
   const n = (key: string) => Number(row?.[key] ?? 0);
-  return { knowledgeBases: n("kbs"), ready: n("ready"), processing: n("processing"), error: n("error"), sources: n("sources"), sourcesReady: n("sources_ready") };
+  return { collections: n("kbs"), ready: n("ready"), processing: n("processing"), error: n("error"), sources: n("sources"), sourcesReady: n("sources_ready") };
 }
 
 export async function getWorkflowActivity(workspaceId: string): Promise<WorkflowActivitySummary> {

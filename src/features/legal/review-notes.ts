@@ -28,7 +28,7 @@ export const REVIEW_NOTES: ReadonlyArray<ReviewNote> = [
   {
     area: "jurisdiction",
     question:
-      "Is the operator a controller, a processor, or both? For account data it is likely a controller; for content a customer puts into a chatbot, a knowledge base or the CRM it is likely a processor acting for that customer. That distinction changes what the policy must say and whether a data processing agreement is required.",
+      "Is the operator a controller, a processor, or both? For account data it is likely a controller; for content a customer puts into a chatbot, a knowledge collection or the CRM it is likely a processor acting for that customer. That distinction changes what the policy must say and whether a data processing agreement is required.",
     currentState:
       "The data model is multi-tenant: every customer record carries a workspace id, and tenant isolation is enforced in SQL and by Row Level Security. The code makes no controller or processor claim.",
   },
@@ -66,7 +66,7 @@ export const REVIEW_NOTES: ReadonlyArray<ReviewNote> = [
   {
     area: "ai",
     question:
-      "Do customers need contractual assurance that content in their knowledge bases and conversations is not used to improve the service or any model?",
+      "Do customers need contractual assurance that content in their knowledge collections and conversations is not used to improve the service or any model?",
     currentState:
       "The application does not use customer content for training, and has no mechanism to do so. Embeddings are currently produced by a local deterministic provider, not sent to a third party.",
   },

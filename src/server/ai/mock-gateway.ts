@@ -35,7 +35,7 @@ function composeReply(request: ChatCompletionRequest): string {
     parts.push(`Thanks for your message. You asked: "${lastUser.slice(0, 160)}${lastUser.length > 160 ? "…" : ""}".`);
     if (sources.length > 0) {
       parts.push(
-        `Based on ${sources.length} matching source${sources.length === 1 ? "" : "s"} from the connected knowledge base, here is a grounded answer: ${sources[0]?.snippet ?? ""}`,
+        `Based on ${sources.length} matching source${sources.length === 1 ? "" : "s"} from your knowledge, here is a grounded answer: ${sources[0]?.snippet ?? ""}`,
       );
       parts.push(sources.map((s, i) => `[${i + 1}] ${s.title}`).join("  "));
     } else {

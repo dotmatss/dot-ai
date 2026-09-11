@@ -8,7 +8,7 @@ export const PLATFORM_PAGES: DocPage[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "A chatbot is the simplest assistant: instructions, a model, optional knowledge bases, and an appearance. It streams answers and cites the sources it used.",
+        text: "A chatbot is the simplest assistant: instructions, a model, optional collections, and an appearance. It streams answers and cites the sources it used.",
       },
       { type: "heading", id: "instructions", text: "Instructions" },
       {
@@ -21,7 +21,7 @@ export const PLATFORM_PAGES: DocPage[] = [
         label: "Example instructions",
         code: `You are the support assistant for Acme, a company that sells lab equipment.
 
-- Answer from the connected knowledge base and cite the sources as [n].
+- Answer from the connected collections and cite the sources as [n].
 - If the knowledge does not cover the question, say so and offer to pass it to
   a human rather than guessing.
 - Never quote a price; prices change, so link to the pricing page instead.
@@ -40,7 +40,7 @@ export const PLATFORM_PAGES: DocPage[] = [
       { type: "heading", id: "knowledge", text: "Knowledge" },
       {
         type: "paragraph",
-        text: "Attach any number of knowledge bases from the same workspace. On every turn the most relevant chunks are retrieved and passed to the model, which cites them as numbered sources. See [knowledge base](/docs/knowledge-base).",
+        text: "Attach any number of collections from the same workspace. On every turn the most relevant chunks are retrieved and passed to the model, which cites them as numbered sources. See [knowledge](/docs/knowledge).",
       },
       { type: "heading", id: "status", text: "Status" },
       {
@@ -140,6 +140,25 @@ export const PLATFORM_PAGES: DocPage[] = [
         type: "paragraph",
         text: "A workflow must have exactly one trigger, no cycles, edges that point at real nodes, and valid configuration on every node. Unreachable nodes are reported as warnings. Problems appear in the builder as you edit rather than at run time.",
       },
+      { type: "heading", id: "preview", text: "Preview" },
+      {
+        type: "paragraph",
+        text: "The builder has two views of the same workflow. **Build** is the editor. **Preview** draws the workflow as a diagram: every step as a card showing its type, name and a one-line summary, and every connection as an arrow, with both sides of a branch labelled “If true” and “Otherwise”. It reads the definition you are editing, so unsaved changes appear straight away and are marked as such.",
+      },
+      {
+        type: "list",
+        items: [
+          "**Read-only** — the preview can pan, zoom, fit to view and select a step. It has no way to move, delete, reconnect or reconfigure anything; the editor stays on the Build tab.",
+          "**Inspect a step** — selecting a card dims everything that is not upstream or downstream of it, and shows what that step does and what it is connected to. Credentials are never shown: an HTTP step lists its header names, never their values.",
+          "**Walkthrough** — the same workflow as a numbered list, with each step's summary and where the run goes next. It is always on the page, works with a keyboard and a screen reader, and is the presentation used on narrow screens where a diagram would be unreadable.",
+        ],
+      },
+      {
+        type: "callout",
+        tone: "info",
+        title: "Preview is not a run",
+        body: "The preview shows what a workflow is, not what a run did. No step on it carries a status, because nothing has executed. Steps the engine only records rather than performs are labelled “Simulated” so a diagram cannot suggest a system was contacted when it was not. For what actually happened, open Runs.",
+      },
       { type: "heading", id: "runs", text: "Runs" },
       {
         type: "paragraph",
@@ -154,13 +173,43 @@ export const PLATFORM_PAGES: DocPage[] = [
     ],
   },
   {
-    slug: "knowledge-base",
-    title: "Knowledge base",
-    description: "How sources become retrievable, cited answers.",
+    slug: "knowledge",
+    title: "Knowledge",
+    description: "How collections group your sources into retrievable, cited answers.",
     blocks: [
       {
         type: "paragraph",
-        text: "A knowledge base turns your content into passages a model can quote. Attach one to a chatbot or an agent and its answers become grounded and citable.",
+        text: "Knowledge turns your content into passages a model can quote. A source is one document; a collection is a named group of them. Attach a collection to a chatbot or an agent and its answers become grounded and citable.",
+      },
+      { type: "heading", id: "collections", text: "Collections" },
+      {
+        type: "paragraph",
+        text: "A collection is a logical grouping, not a folder. It holds no retrieval settings and no embedding configuration — those belong to the document and to the agent doing the retrieving. What a collection decides is scope: an agent answers from the collections it has been given and from nothing else, which is how “this bot can only answer from HR Policies” becomes a fact about the data rather than a line in a prompt.",
+      },
+      {
+        type: "code",
+        language: "text",
+        label: "How knowledge is organized",
+        code: `Workspace
+└── Knowledge
+      ├── Collection ── Source, Source, Source
+      ├── Collection ── Source
+      └── Unorganized ── Source, Source`,
+      },
+      {
+        type: "paragraph",
+        text: "A source belongs to at most one collection. Moving it between collections is a metadata change: nothing is re-fetched, re-chunked or re-embedded, so filing your library is cheap no matter how large it is.",
+      },
+      { type: "heading", id: "unorganized", text: "Unorganized" },
+      {
+        type: "paragraph",
+        text: "A source added without a collection lands in Unorganized. It is fully ingested, chunked, embedded and searchable in the app — but no agent can retrieve from it until you file it. Unorganized is a staging area, deliberately outside every retrieval scope, so nothing becomes answerable by accident just because somebody uploaded it.",
+      },
+      {
+        type: "callout",
+        tone: "info",
+        title: "Deleting a collection keeps its sources",
+        body: "Deleting a collection removes the grouping and its chatbot and agent attachments. The sources in it, and every passage indexed from them, move to Unorganized intact. Deleting a source is the separate, explicit action that destroys content.",
       },
       { type: "heading", id: "lifecycle", text: "The lifecycle" },
       {
@@ -186,7 +235,7 @@ export const PLATFORM_PAGES: DocPage[] = [
       { type: "heading", id: "retrieval", text: "Retrieval" },
       {
         type: "paragraph",
-        text: "On each turn the question is matched against indexed chunks using PostgreSQL full-text ranking, and the best passages are passed to the model with their titles, so it can cite them as [1], [2] and so on. A knowledge base whose sources are not yet chunked falls back to the source text rather than returning nothing.",
+        text: "On each turn the question is matched against indexed chunks using PostgreSQL full-text ranking, restricted to the collections the assistant is attached to, and the best passages are passed to the model with their titles, so it can cite them as [1], [2] and so on. A source that is not yet chunked falls back to its own text rather than returning nothing.",
       },
       {
         type: "callout",
@@ -197,7 +246,7 @@ export const PLATFORM_PAGES: DocPage[] = [
       { type: "heading", id: "testing", text: "Test retrieval" },
       {
         type: "paragraph",
-        text: "The Test tab runs a query against the knowledge base and shows the ranked passages with their scores. Use it to check coverage before wiring the base to an assistant.",
+        text: "The Test tab runs a query against one collection and shows the ranked passages with their scores. It runs exactly the retrieval the chat pipeline runs, so what you see is what the model would be given. Use it to check coverage before attaching the collection to an assistant.",
       },
     ],
   },

@@ -25,7 +25,7 @@ function percentChange(current: number, previous: number): number | null {
 function SetupChecklist({ chatbot, base }: { chatbot: Chatbot; base: string }) {
   const steps = [
     { done: chatbot.instructions.trim().length > 0, label: "Write instructions", href: `${base}/instructions`, icon: Sparkles },
-    { done: chatbot.knowledgeBaseIds.length > 0, label: "Attach a knowledge base", href: `${base}/knowledge`, icon: BookOpen },
+    { done: chatbot.collectionIds.length > 0, label: "Attach a collection", href: `${base}/knowledge`, icon: BookOpen },
     { done: chatbot.allowedDomains.length > 0, label: "Allow your website domain", href: `${base}/deploy`, icon: Globe },
     { done: chatbot.status === "active", label: "Activate the chatbot", href: `${base}/deploy`, icon: Check },
   ];
@@ -176,7 +176,7 @@ export function ChatbotOverview({ chatbotId }: { chatbotId: string }) {
             <dt className="text-foreground-muted">Model</dt>
             <dd className="truncate">{chatbot.modelConfig.model || "Workspace default"}</dd>
             <dt className="text-foreground-muted">Knowledge</dt>
-            <dd>{chatbot.knowledgeBaseCount} base{chatbot.knowledgeBaseCount === 1 ? "" : "s"}</dd>
+            <dd>{chatbot.collectionCount} base{chatbot.collectionCount === 1 ? "" : "s"}</dd>
             <dt className="text-foreground-muted">Domains</dt>
             <dd>{chatbot.allowedDomains.length === 0 ? "None allowed" : chatbot.allowedDomains.join(", ")}</dd>
             <dt className="text-foreground-muted">Created</dt>

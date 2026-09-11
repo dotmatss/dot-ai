@@ -45,7 +45,7 @@ export const updateChatbotSchema = z
     modelConfig: chatbotModelConfigSchema,
     appearance: chatbotAppearanceSchema,
     allowedDomains: z.array(allowedDomainSchema).max(50, { error: "Up to 50 domains" }),
-    knowledgeBaseIds: z.array(z.uuid()).max(20),
+    collectionIds: z.array(z.uuid()).max(20),
   })
   .partial()
   .refine((value) => Object.keys(value).length > 0, { error: "Nothing to update" });

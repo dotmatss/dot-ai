@@ -14,7 +14,7 @@ export async function DashboardKnowledgeStatus({ workspaceId, workspaceSlug }: {
     <AppCard>
       <AppCardHeader>
         <div>
-          <AppCardTitle>Knowledge bases</AppCardTitle>
+          <AppCardTitle>Collections</AppCardTitle>
           <AppCardDescription>Ingestion and indexing status.</AppCardDescription>
         </div>
         <AppButtonLink href={href} variant="ghost" size="sm" trailingIcon={<ArrowUpRight aria-hidden />}>
@@ -22,15 +22,15 @@ export async function DashboardKnowledgeStatus({ workspaceId, workspaceSlug }: {
         </AppButtonLink>
       </AppCardHeader>
       <AppCardContent className="pt-4">
-        {status.knowledgeBases === 0 ? (
+        {status.collections === 0 ? (
           <AppEmptyState
             size="sm"
             icon={<BookOpen aria-hidden />}
-            title="No knowledge bases"
-            description="Add documents or URLs so chatbots can answer from your content."
+            title="No collections"
+            description="Group documents into a collection so chatbots and agents can answer from your content."
             action={
               <AppButtonLink href={href} size="sm" variant="secondary">
-                Create knowledge base
+                Create collection
               </AppButtonLink>
             }
           />

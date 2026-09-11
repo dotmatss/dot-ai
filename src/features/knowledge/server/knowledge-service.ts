@@ -1,28 +1,40 @@
 import "server-only";
 
-import { DEFAULT_EMBEDDING_CONFIG } from "@/features/knowledge/constants";
+import { RECENT_SOURCES_LIMIT } from "@/features/knowledge/constants";
 import { htmlToText } from "@/features/knowledge/html-text";
-import type { CreateKnowledgeBaseInput, CreateSourceInput, KnowledgeSearchInput, updateKnowledgeBaseSchema } from "@/features/knowledge/schemas";
-import { processKnowledgeBase, processSource, recomputeKnowledgeBaseStatus } from "@/features/knowledge/server/pipeline";
+import type {
+  CreateCollectionInput,
+  CreateSourceInput,
+  KnowledgeSearchInput,
+  MoveSourceInput,
+  updateCollectionSchema,
+} from "@/features/knowledge/schemas";
+import { processCollection, processSource, recomputeCollectionStatus } from "@/features/knowledge/server/pipeline";
 import {
-  deleteKnowledgeBaseRow,
+  countUnorganizedSources,
+  deleteCollectionRow,
   deleteSourceRow,
-  findKnowledgeBaseById,
+  findCollectionById,
   findSourceById,
-  insertKnowledgeBase,
+  insertCollection,
   insertKnowledgeSource,
-  listKnowledgeBases,
+  listCollectionOptions,
+  listCollections,
   listKnowledgeSources,
-  updateKnowledgeBaseRow,
+  moveSourceToCollection,
+  updateCollectionRow,
 } from "@/features/knowledge/server/knowledge-repository";
 import { retrieveKnowledge } from "@/features/knowledge/server/retrieval";
-import type {
-  KnowledgeBase,
-  KnowledgeBaseListFilters,
-  KnowledgeBaseSummary,
-  KnowledgeSource,
-  KnowledgeSourceListFilters,
-  KnowledgeSourceMetadata,
+import {
+  KNOWLEDGE_SCOPE_ALL,
+  type Collection,
+  type CollectionListFilters,
+  type CollectionSummary,
+  type KnowledgeOverview,
+  type KnowledgeScope,
+  type KnowledgeSource,
+  type KnowledgeSourceListFilters,
+  type KnowledgeSourceMetadata,
 } from "@/features/knowledge/types";
 import { validateUpload } from "@/features/knowledge/uploads";
 import { ApiError } from "@/lib/api/api-error";
@@ -38,34 +50,33 @@ export interface ActorContext {
   userId: string;
 }
 
-type UpdateInput = z.output<typeof updateKnowledgeBaseSchema>;
+type UpdateInput = z.output<typeof updateCollectionSchema>;
 
 /* -------------------------------------------------------------------------- */
-/* Knowledge bases                                                            */
+/* Collections                                                                */
 /* -------------------------------------------------------------------------- */
 
-export function getKnowledgeBases(
+export function getCollections(
   workspaceId: string,
-  filters: KnowledgeBaseListFilters,
-): Promise<Paginated<KnowledgeBaseSummary>> {
-  return listKnowledgeBases(workspaceId, filters);
+  filters: CollectionListFilters,
+): Promise<Paginated<CollectionSummary>> {
+  return listCollections(workspaceId, filters);
 }
 
-export async function getKnowledgeBase(workspaceId: string, knowledgeBaseId: string): Promise<KnowledgeBase> {
-  const base = await findKnowledgeBaseById(workspaceId, knowledgeBaseId);
-  if (!base) throw ApiError.notFound("Knowledge base not found");
-  return base;
+export async function getCollection(workspaceId: string, collectionId: string): Promise<Collection> {
+  const collection = await findCollectionById(workspaceId, collectionId);
+  if (!collection) throw ApiError.notFound("Collection not found");
+  return collection;
 }
 
-export async function createKnowledgeBase(ctx: ActorContext, input: CreateKnowledgeBaseInput): Promise<KnowledgeBase> {
+export async function createCollection(ctx: ActorContext, input: CreateCollectionInput): Promise<Collection> {
   return withWorkspace(ctx.workspaceId, async (client) => {
-    const base = await insertKnowledgeBase(
+    const collection = await insertCollection(
       {
         workspaceId: ctx.workspaceId,
         createdBy: ctx.userId,
         name: input.name,
         description: input.description?.trim() ? input.description.trim() : null,
-        embeddingConfig: DEFAULT_EMBEDDING_CONFIG,
       },
       client,
     );
@@ -73,29 +84,29 @@ export async function createKnowledgeBase(ctx: ActorContext, input: CreateKnowle
       {
         workspaceId: ctx.workspaceId,
         actorId: ctx.userId,
-        entityType: "knowledge_base",
-        entityId: base.id,
+        entityType: "knowledge_collection",
+        entityId: collection.id,
         action: "created",
-        summary: `Created knowledge base “${base.name}”`,
+        summary: `Created collection “${collection.name}”`,
       },
       client,
     );
-    return base;
+    return collection;
   });
 }
 
-export async function updateKnowledgeBase(
+export async function updateCollection(
   ctx: ActorContext,
-  knowledgeBaseId: string,
+  collectionId: string,
   input: UpdateInput,
-): Promise<KnowledgeBase> {
+): Promise<Collection> {
   return withWorkspace(ctx.workspaceId, async (client) => {
-    const existing = await findKnowledgeBaseById(ctx.workspaceId, knowledgeBaseId, client);
-    if (!existing) throw ApiError.notFound("Knowledge base not found");
+    const existing = await findCollectionById(ctx.workspaceId, collectionId, client);
+    if (!existing) throw ApiError.notFound("Collection not found");
 
-    await updateKnowledgeBaseRow(
+    await updateCollectionRow(
       ctx.workspaceId,
-      knowledgeBaseId,
+      collectionId,
       {
         name: input.name,
         description:
@@ -104,17 +115,17 @@ export async function updateKnowledgeBase(
       client,
     );
 
-    const updated = await findKnowledgeBaseById(ctx.workspaceId, knowledgeBaseId, client);
-    if (!updated) throw ApiError.notFound("Knowledge base not found");
+    const updated = await findCollectionById(ctx.workspaceId, collectionId, client);
+    if (!updated) throw ApiError.notFound("Collection not found");
 
     await recordActivity(
       {
         workspaceId: ctx.workspaceId,
         actorId: ctx.userId,
-        entityType: "knowledge_base",
-        entityId: knowledgeBaseId,
+        entityType: "knowledge_collection",
+        entityId: collectionId,
         action: "updated",
-        summary: `Updated knowledge base “${updated.name}”`,
+        summary: `Updated collection “${updated.name}”`,
         metadata: { fields: Object.keys(input) },
       },
       client,
@@ -123,36 +134,77 @@ export async function updateKnowledgeBase(
   });
 }
 
-export async function deleteKnowledgeBase(ctx: ActorContext, knowledgeBaseId: string): Promise<void> {
-  const existing = await findKnowledgeBaseById(ctx.workspaceId, knowledgeBaseId);
-  if (!existing) throw ApiError.notFound("Knowledge base not found");
+/**
+ * Deleting a collection destroys the grouping, not the documents: the foreign
+ * keys are ON DELETE SET NULL, so its sources and their indexed passages move
+ * to Unorganized intact. Any chatbot or agent attached to it loses that
+ * grounding, which is why the attachment counts are surfaced before the fact.
+ */
+export async function deleteCollection(ctx: ActorContext, collectionId: string): Promise<void> {
+  const existing = await findCollectionById(ctx.workspaceId, collectionId);
+  if (!existing) throw ApiError.notFound("Collection not found");
 
-  // Sources, chunks and the chatbot/agent attachments cascade in the database
-  // (migrations 0001 and 0008), so one delete is enough.
-  await deleteKnowledgeBaseRow(ctx.workspaceId, knowledgeBaseId);
+  await deleteCollectionRow(ctx.workspaceId, collectionId);
   await recordActivity({
     workspaceId: ctx.workspaceId,
     actorId: ctx.userId,
-    entityType: "knowledge_base",
-    entityId: knowledgeBaseId,
+    entityType: "knowledge_collection",
+    entityId: collectionId,
     action: "deleted",
-    summary: `Deleted knowledge base “${existing.name}”`,
-    metadata: { sourceCount: existing.sourceCount, chunkCount: existing.chunkCount },
+    summary: `Deleted collection “${existing.name}”`,
+    metadata: {
+      unfiledSourceCount: existing.sourceCount,
+      detachedChatbotCount: existing.attachedChatbotCount,
+      detachedAgentCount: existing.attachedAgentCount,
+    },
   });
 }
 
-export async function reprocessKnowledgeBase(ctx: ActorContext, knowledgeBaseId: string): Promise<KnowledgeBase> {
-  const existing = await getKnowledgeBase(ctx.workspaceId, knowledgeBaseId);
-  const base = await processKnowledgeBase({ workspaceId: ctx.workspaceId, knowledgeBaseId });
+export async function reprocessCollection(ctx: ActorContext, collectionId: string): Promise<Collection> {
+  const existing = await getCollection(ctx.workspaceId, collectionId);
+  const collection = await processCollection({ workspaceId: ctx.workspaceId, collectionId });
   await recordActivity({
     workspaceId: ctx.workspaceId,
     actorId: ctx.userId,
-    entityType: "knowledge_base",
-    entityId: knowledgeBaseId,
+    entityType: "knowledge_collection",
+    entityId: collectionId,
     action: "reprocessed",
     summary: `Reprocessed ${existing.sourceCount} source${existing.sourceCount === 1 ? "" : "s"} in “${existing.name}”`,
   });
-  return base;
+  return collection;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Knowledge overview                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Everything the Knowledge landing page shows, in one round trip: the
+ * collections, the most recently added documents across all of them, and how
+ * many are still waiting to be filed.
+ */
+export async function getKnowledgeOverview(
+  workspaceId: string,
+  collectionLimit: number,
+): Promise<KnowledgeOverview> {
+  const [collections, recent, unorganizedCount] = await Promise.all([
+    listCollections(workspaceId, { page: 1, pageSize: collectionLimit }),
+    listKnowledgeSources(workspaceId, KNOWLEDGE_SCOPE_ALL, { page: 1, pageSize: RECENT_SOURCES_LIMIT }),
+    countUnorganizedSources(workspaceId),
+  ]);
+
+  return {
+    collections: collections.items,
+    collectionTotal: collections.total,
+    recentSources: recent.items,
+    unorganizedCount,
+    totalSourceCount: recent.total,
+  };
+}
+
+/** Collections a document can be filed into, for the move menu. */
+export function getCollectionOptions(workspaceId: string): Promise<Array<{ id: string; name: string }>> {
+  return listCollectionOptions(workspaceId);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -161,41 +213,56 @@ export async function reprocessKnowledgeBase(ctx: ActorContext, knowledgeBaseId:
 
 export async function getKnowledgeSources(
   workspaceId: string,
-  knowledgeBaseId: string,
+  scope: KnowledgeScope,
   filters: KnowledgeSourceListFilters,
 ): Promise<Paginated<KnowledgeSource>> {
-  await getKnowledgeBase(workspaceId, knowledgeBaseId);
-  return listKnowledgeSources(workspaceId, knowledgeBaseId, filters);
+  // A collection scope has to be proved to exist in this workspace, or a
+  // listing for someone else's collection id would return an empty page
+  // instead of a 404 and read as "this collection is empty".
+  if (scope.kind === "collection") await getCollection(workspaceId, scope.collectionId);
+  return listKnowledgeSources(workspaceId, scope, filters);
 }
 
-async function afterSourceAdded(ctx: ActorContext, base: KnowledgeBase, source: KnowledgeSource): Promise<KnowledgeSource> {
+async function afterSourceAdded(ctx: ActorContext, source: KnowledgeSource): Promise<KnowledgeSource> {
   await recordActivity({
     workspaceId: ctx.workspaceId,
     actorId: ctx.userId,
     entityType: "knowledge_source",
     entityId: source.id,
     action: "created",
-    summary: `Added ${source.type} source “${source.name}” to “${base.name}”`,
-    metadata: { knowledgeBaseId: base.id },
+    summary: source.collectionName
+      ? `Added ${source.type} source “${source.name}” to “${source.collectionName}”`
+      : `Added ${source.type} source “${source.name}” to Unorganized`,
+    metadata: { collectionId: source.collectionId },
   });
   // Inline processing: the caller waits, and the response already carries the
   // final status so the table does not flicker through a stale row.
   return processSource({ workspaceId: ctx.workspaceId, sourceId: source.id });
 }
 
+/**
+ * Resolves the collection a new document is being added to. `null` is a valid
+ * answer meaning Unorganized; an id that is not this workspace's is a 404.
+ */
+async function resolveTargetCollection(workspaceId: string, collectionId: string | null): Promise<string | null> {
+  if (!collectionId) return null;
+  await getCollection(workspaceId, collectionId);
+  return collectionId;
+}
+
 export async function createKnowledgeSource(
   ctx: ActorContext,
-  knowledgeBaseId: string,
+  collectionId: string | null,
   input: CreateSourceInput,
 ): Promise<KnowledgeSource> {
-  const base = await getKnowledgeBase(ctx.workspaceId, knowledgeBaseId);
+  const target = await resolveTargetCollection(ctx.workspaceId, collectionId);
 
   const source = await withWorkspace(ctx.workspaceId, (client) =>
     input.type === "text"
       ? insertKnowledgeSource(
           {
             workspaceId: ctx.workspaceId,
-            knowledgeBaseId,
+            collectionId: target,
             type: "text",
             name: input.name,
             uri: null,
@@ -207,7 +274,7 @@ export async function createKnowledgeSource(
       : insertKnowledgeSource(
           {
             workspaceId: ctx.workspaceId,
-            knowledgeBaseId,
+            collectionId: target,
             type: "url",
             // The URL stands in as the name until ingestion finds a page title.
             name: input.name?.trim() ? input.name.trim() : input.url,
@@ -219,7 +286,7 @@ export async function createKnowledgeSource(
         ),
   );
 
-  return afterSourceAdded(ctx, base, source);
+  return afterSourceAdded(ctx, source);
 }
 
 export interface UploadedFile {
@@ -236,10 +303,10 @@ export interface UploadedFile {
  */
 export async function createUploadedKnowledgeSource(
   ctx: ActorContext,
-  knowledgeBaseId: string,
+  collectionId: string | null,
   file: UploadedFile,
 ): Promise<KnowledgeSource> {
-  const base = await getKnowledgeBase(ctx.workspaceId, knowledgeBaseId);
+  const target = await resolveTargetCollection(ctx.workspaceId, collectionId);
 
   const validation = validateUpload({ name: file.name, type: file.type, size: file.size });
   if (!validation.ok) throw ApiError.validation({ file: [validation.message] }, validation.message);
@@ -270,7 +337,7 @@ export async function createUploadedKnowledgeSource(
     insertKnowledgeSource(
       {
         workspaceId: ctx.workspaceId,
-        knowledgeBaseId,
+        collectionId: target,
         type: "file",
         name: file.name.slice(0, 160),
         uri: null,
@@ -281,23 +348,54 @@ export async function createUploadedKnowledgeSource(
     ),
   );
 
-  return afterSourceAdded(ctx, base, source);
+  return afterSourceAdded(ctx, source);
 }
 
-async function getSource(workspaceId: string, sourceId: string): Promise<KnowledgeSource> {
+export async function getKnowledgeSource(workspaceId: string, sourceId: string): Promise<KnowledgeSource> {
   const source = await findSourceById(workspaceId, sourceId);
   if (!source) throw ApiError.notFound("Source not found");
   return source;
 }
 
-export async function reprocessKnowledgeSource(
+/**
+ * Files a document into a collection, or back into Unorganized.
+ *
+ * Both the collection it left and the one it joined have to have their rollup
+ * status recomputed: a move can empty one collection and put the other into
+ * `error` if the document had failed to process.
+ */
+export async function moveKnowledgeSource(
   ctx: ActorContext,
-  knowledgeBaseId: string,
   sourceId: string,
+  input: MoveSourceInput,
 ): Promise<KnowledgeSource> {
-  const source = await getSource(ctx.workspaceId, sourceId);
-  // The id from the URL is never trusted for tenancy or for parentage.
-  if (source.knowledgeBaseId !== knowledgeBaseId) throw ApiError.notFound("Source not found");
+  const source = await getKnowledgeSource(ctx.workspaceId, sourceId);
+  const target = await resolveTargetCollection(ctx.workspaceId, input.collectionId);
+  if (source.collectionId === target) return source;
+
+  await moveSourceToCollection(ctx.workspaceId, sourceId, target);
+  await Promise.all([
+    recomputeCollectionStatus(ctx.workspaceId, source.collectionId),
+    recomputeCollectionStatus(ctx.workspaceId, target),
+  ]);
+
+  const updated = await getKnowledgeSource(ctx.workspaceId, sourceId);
+  await recordActivity({
+    workspaceId: ctx.workspaceId,
+    actorId: ctx.userId,
+    entityType: "knowledge_source",
+    entityId: sourceId,
+    action: "moved",
+    summary: updated.collectionName
+      ? `Filed “${updated.name}” into “${updated.collectionName}”`
+      : `Moved “${updated.name}” to Unorganized`,
+    metadata: { from: source.collectionId, to: target },
+  });
+  return updated;
+}
+
+export async function reprocessKnowledgeSource(ctx: ActorContext, sourceId: string): Promise<KnowledgeSource> {
+  await getKnowledgeSource(ctx.workspaceId, sourceId);
 
   const updated = await processSource({ workspaceId: ctx.workspaceId, sourceId });
   await recordActivity({
@@ -307,22 +405,17 @@ export async function reprocessKnowledgeSource(
     entityId: sourceId,
     action: "reprocessed",
     summary: `Reprocessed source “${updated.name}”`,
-    metadata: { knowledgeBaseId, status: updated.status },
+    metadata: { collectionId: updated.collectionId, status: updated.status },
   });
   return updated;
 }
 
-export async function deleteKnowledgeSource(
-  ctx: ActorContext,
-  knowledgeBaseId: string,
-  sourceId: string,
-): Promise<void> {
-  const source = await getSource(ctx.workspaceId, sourceId);
-  if (source.knowledgeBaseId !== knowledgeBaseId) throw ApiError.notFound("Source not found");
+export async function deleteKnowledgeSource(ctx: ActorContext, sourceId: string): Promise<void> {
+  const source = await getKnowledgeSource(ctx.workspaceId, sourceId);
 
   // Chunks cascade with the source row (migration 0008).
   await deleteSourceRow(ctx.workspaceId, sourceId);
-  await recomputeKnowledgeBaseStatus(ctx.workspaceId, knowledgeBaseId);
+  await recomputeCollectionStatus(ctx.workspaceId, source.collectionId);
   await recordActivity({
     workspaceId: ctx.workspaceId,
     actorId: ctx.userId,
@@ -330,7 +423,7 @@ export async function deleteKnowledgeSource(
     entityId: sourceId,
     action: "deleted",
     summary: `Removed source “${source.name}”`,
-    metadata: { knowledgeBaseId, chunkCount: source.chunkCount },
+    metadata: { collectionId: source.collectionId, chunkCount: source.chunkCount },
   });
 }
 
@@ -345,21 +438,22 @@ export interface KnowledgeSearchResult {
 
 /**
  * The Test retrieval tab. Runs exactly the retrieval the chat pipeline runs, so
- * what users see here is what the model will be given.
+ * what users see here is what the model will be given — including the fact that
+ * unorganized documents are out of scope.
  */
-export async function searchKnowledgeBase(
+export async function searchCollection(
   ctx: ActorContext,
-  knowledgeBaseId: string,
+  collectionId: string,
   input: KnowledgeSearchInput,
 ): Promise<KnowledgeSearchResult> {
-  await getKnowledgeBase(ctx.workspaceId, knowledgeBaseId);
-  const results = await retrieveKnowledge(ctx.workspaceId, [knowledgeBaseId], input.query, input.limit);
+  await getCollection(ctx.workspaceId, collectionId);
+  const results = await retrieveKnowledge(ctx.workspaceId, [collectionId], input.query, input.limit);
   await recordUsage({
     workspaceId: ctx.workspaceId,
     kind: "retrieval",
     quantity: 1,
-    refType: "knowledge_base",
-    refId: knowledgeBaseId,
+    refType: "knowledge_collection",
+    refId: collectionId,
   });
   return { query: input.query, results };
 }

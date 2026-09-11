@@ -36,6 +36,6 @@ export const MODEL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 ];
 
 export const DEFAULT_INSTRUCTIONS_PLACEHOLDER = `You are a helpful support assistant for Acme.
-- Answer using the connected knowledge base when possible and cite sources.
+- Answer using the connected knowledge collections when possible and cite sources.
 - Keep answers concise and friendly.
 - If you are unsure, ask a clarifying question or offer to connect the visitor with a human.`;

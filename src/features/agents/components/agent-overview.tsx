@@ -27,7 +27,7 @@ function SetupChecklist({ agent, base }: { agent: Agent; base: string }) {
   const steps = [
     { done: agent.instructions.trim().length > 0, label: "Write instructions", href: `${base}/instructions`, icon: Sparkles },
     { done: agent.enabledToolCount > 0, label: "Enable at least one tool", href: `${base}/tools`, icon: Wrench },
-    { done: agent.knowledgeBaseIds.length > 0, label: "Attach a knowledge base", href: `${base}/knowledge`, icon: BookOpen },
+    { done: agent.collectionIds.length > 0, label: "Attach a collection", href: `${base}/knowledge`, icon: BookOpen },
     { done: agent.status === "active", label: "Activate the agent", href: `${base}/settings`, icon: Play },
   ];
   const completed = steps.filter((step) => step.done).length;
@@ -190,7 +190,7 @@ export function AgentOverview({ agentId }: { agentId: string }) {
             <dd>{agent.requiresApproval ? "Required for every tool call" : "Per tool"}</dd>
             <dt className="text-foreground-muted">Knowledge</dt>
             <dd>
-              {agent.knowledgeBaseCount} base{agent.knowledgeBaseCount === 1 ? "" : "s"}
+              {agent.collectionCount} base{agent.collectionCount === 1 ? "" : "s"}
             </dd>
             <dt className="text-foreground-muted">Created</dt>
             <dd>

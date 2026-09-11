@@ -142,7 +142,7 @@ export const AGENT_TOOLS: Record<AgentToolId, AgentToolDefinition> = {
   knowledge_search: {
     id: "knowledge_search",
     name: "Knowledge search",
-    description: "Search the knowledge bases attached to this agent.",
+    description: "Search the collections attached to this agent.",
     capability: "Answer from your own documents and cite the matching passages.",
     category: "knowledge",
     icon: BookOpen,

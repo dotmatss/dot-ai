@@ -98,7 +98,7 @@ function Playground({ agent }: { agent: Agent }) {
             <dt className="text-foreground-muted">Output</dt>
             <dd>{agent.outputSchema ? "Structured JSON" : "Free text"}</dd>
             <dt className="text-foreground-muted">Knowledge</dt>
-            <dd>{agent.knowledgeBaseCount === 0 ? "None attached" : `${agent.knowledgeBaseCount} attached`}</dd>
+            <dd>{agent.collectionCount === 0 ? "None attached" : `${agent.collectionCount} attached`}</dd>
           </dl>
         </AppCard>
         <AppCard padding="md" className="flex flex-col gap-2 text-sm">

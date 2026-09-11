@@ -24,7 +24,7 @@ export interface ChatbotSummary {
   description: string | null;
   status: ChatbotStatus;
   conversationCount: number;
-  knowledgeBaseCount: number;
+  collectionCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,7 +37,7 @@ export interface Chatbot extends ChatbotSummary {
   appearance: ChatbotAppearance;
   allowedDomains: string[];
   embedKey: string;
-  knowledgeBaseIds: string[];
+  collectionIds: string[];
 }
 
 export interface ChatbotListFilters {

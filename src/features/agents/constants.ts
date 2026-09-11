@@ -39,7 +39,7 @@ export const MODEL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 
 export const DEFAULT_INSTRUCTIONS_PLACEHOLDER = `You are an operations agent for Acme.
 - Work through the task step by step and use tools when they help.
-- Prefer the connected knowledge base for product facts and cite sources.
+- Prefer the connected knowledge collections for product facts and cite sources.
 - Ask before taking irreversible actions such as sending email.
 - Report what you did and what still needs a human.`;
 

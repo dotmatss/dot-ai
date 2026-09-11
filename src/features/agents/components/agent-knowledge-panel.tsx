@@ -32,7 +32,7 @@ function KnowledgeSelector({ agentId, options }: { agentId: string; options: Age
   const attachedIds = new Set(options.filter((option) => option.attached).map((option) => option.id));
   const [selected, setSelected] = useState<Set<string>>(() => new Set(attachedIds));
   const dirty = selected.size !== attachedIds.size || [...selected].some((id) => !attachedIds.has(id));
-  const knowledgeHref = `/w/${membership.workspace.slug}/knowledge` as Route;
+  const knowledgeHref = `/w/${membership.workspace.slug}/knowledge/collections` as Route;
 
   function toggle(id: string) {
     setSelected((current) => {
@@ -71,7 +71,7 @@ function KnowledgeSelector({ agentId, options }: { agentId: string; options: Age
             <AppButton variant="secondary" onClick={() => setSelected(new Set(attachedIds))} disabled={!dirty || update.isPending}>
               Discard
             </AppButton>
-            <AppButton loading={update.isPending} disabled={!dirty} onClick={() => update.mutate({ knowledgeBaseIds: [...selected] })}>
+            <AppButton loading={update.isPending} disabled={!dirty} onClick={() => update.mutate({ collectionIds: [...selected] })}>
               Save knowledge
             </AppButton>
           </div>
@@ -79,11 +79,11 @@ function KnowledgeSelector({ agentId, options }: { agentId: string; options: Age
       </div>
       <div className="flex flex-col gap-4">
         <AppAlert tone="info" title="How retrieval works">
-          On every run the most relevant chunks from the attached knowledge bases are retrieved for the incoming task and passed to the model, which
+          On every run the most relevant chunks from the attached collections are retrieved for the incoming task and passed to the model, which
           cites them as numbered sources. Enable the knowledge search tool as well if the agent should look things up mid-task.
         </AppAlert>
         <AppButtonLink href={knowledgeHref} variant="secondary" leadingIcon={<BookOpen aria-hidden />}>
-          Manage knowledge bases
+          Manage collections
         </AppButtonLink>
       </div>
     </div>
@@ -102,10 +102,14 @@ export function AgentKnowledgePanel({ agentId }: { agentId: string }) {
       <AppCard>
         <AppEmptyState
           icon={<Database aria-hidden />}
-          title="No knowledge bases in this workspace"
-          description="Create a knowledge base, add documents or URLs, and attach it here so the agent can work from your content and cite it."
+          title="No collections in this workspace"
+          description="Create a collection, add documents or URLs, and attach it here so the agent can work from your content and cite it."
           action={
-            <AppButtonLink href={`/w/${membership.workspace.slug}/knowledge` as Route} variant="primary" size="sm">
+            <AppButtonLink
+              href={`/w/${membership.workspace.slug}/knowledge/collections` as Route}
+              variant="primary"
+              size="sm"
+            >
               Go to Knowledge
             </AppButtonLink>
           }

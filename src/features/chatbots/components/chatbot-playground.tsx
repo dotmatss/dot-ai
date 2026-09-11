@@ -64,7 +64,7 @@ function Playground({ chatbot }: { chatbot: Chatbot }) {
             <dt className="text-foreground-muted">Max tokens</dt>
             <dd className="tabular-nums">{chatbot.modelConfig.maxTokens}</dd>
             <dt className="text-foreground-muted">Knowledge</dt>
-            <dd>{chatbot.knowledgeBaseCount === 0 ? "None attached" : `${chatbot.knowledgeBaseCount} attached`}</dd>
+            <dd>{chatbot.collectionCount === 0 ? "None attached" : `${chatbot.collectionCount} attached`}</dd>
           </dl>
         </AppCard>
       </div>

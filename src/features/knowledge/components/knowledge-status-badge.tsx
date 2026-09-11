@@ -1,9 +1,9 @@
 import { AppBadge } from "@/components/ui/app-badge";
-import { KNOWLEDGE_BASE_STATUS_META, KNOWLEDGE_SOURCE_STATUS_META } from "@/features/knowledge/constants";
-import { isSourceInFlight, type KnowledgeBaseStatus, type KnowledgeSourceStatus } from "@/features/knowledge/types";
+import { COLLECTION_STATUS_META, KNOWLEDGE_SOURCE_STATUS_META } from "@/features/knowledge/constants";
+import { isSourceInFlight, type CollectionStatus, type KnowledgeSourceStatus } from "@/features/knowledge/types";
 
-export function KnowledgeBaseStatusBadge({ status, size }: { status: KnowledgeBaseStatus; size?: "sm" | "md" }) {
-  const meta = KNOWLEDGE_BASE_STATUS_META[status];
+export function CollectionStatusBadge({ status, size }: { status: CollectionStatus; size?: "sm" | "md" }) {
+  const meta = COLLECTION_STATUS_META[status];
   return (
     <AppBadge tone={meta.tone} dot size={size} title={meta.description}>
       {meta.label}

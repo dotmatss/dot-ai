@@ -55,7 +55,7 @@ export async function runChatbotChat(options: RunChatbotChatOptions): Promise<Re
 
   await appendMessage({ workspaceId, conversationId, role: "user", content: lastUser.content });
 
-  const sources = await retrieveKnowledge(workspaceId, chatbot.knowledgeBaseIds, lastUser.content).catch(() => [] as RetrievedSource[]);
+  const sources = await retrieveKnowledge(workspaceId, chatbot.collectionIds, lastUser.content).catch(() => [] as RetrievedSource[]);
 
   const messages: ChatMessage[] = [
     { role: "system", content: buildChatbotSystemPrompt(chatbot) },

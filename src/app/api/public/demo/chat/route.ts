@@ -14,7 +14,7 @@ import { toErrorResponse } from "@/server/http/responses";
  * Unauthenticated by design: it is a demo for anonymous visitors, so there is
  * no credential to present and none is accepted. What makes that safe is that
  * the handler has nothing tenant-scoped to reach - no workspace, no chatbot
- * row, no conversation, no knowledge base. It answers from the published
+ * row, no conversation, no knowledge. It answers from the published
  * documentation and persists nothing.
  *
  * There is no CSRF check because there is no cookie, no session and no state

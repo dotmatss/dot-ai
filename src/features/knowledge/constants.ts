@@ -1,14 +1,14 @@
 import type { BadgeTone } from "@/components/ui/app-badge";
 import { CHUNK_OVERLAP_TOKENS, CHUNK_TARGET_TOKENS } from "@/features/knowledge/chunking";
 import type {
-  KnowledgeBaseStatus,
+  CollectionStatus,
   KnowledgeEmbeddingConfig,
   KnowledgeSourceStatus,
   KnowledgeSourceType,
 } from "@/features/knowledge/types";
 
-export const KNOWLEDGE_BASE_STATUS_META: Record<KnowledgeBaseStatus, { label: string; tone: BadgeTone; description: string }> = {
-  empty: { label: "Empty", tone: "neutral", description: "No sources added yet." },
+export const COLLECTION_STATUS_META: Record<CollectionStatus, { label: string; tone: BadgeTone; description: string }> = {
+  empty: { label: "Empty", tone: "neutral", description: "No sources in this collection yet." },
   processing: { label: "Processing", tone: "info", description: "Sources are being ingested and indexed." },
   ready: { label: "Ready", tone: "success", description: "All sources are indexed and available for retrieval." },
   error: { label: "Needs attention", tone: "danger", description: "One or more sources failed to process." },
@@ -37,8 +37,8 @@ export const KNOWLEDGE_SOURCE_TYPE_META: Record<KnowledgeSourceType, { label: st
 };
 
 /**
- * Written to knowledge_bases.embedding_config at creation so each knowledge
- * base records how its vectors were produced.
+ * Written to knowledge_sources.embedding_config on every pipeline run, so each
+ * document records how its own vectors were produced.
  */
 export const DEFAULT_EMBEDDING_CONFIG: KnowledgeEmbeddingConfig = {
   provider: "mock",
@@ -48,6 +48,12 @@ export const DEFAULT_EMBEDDING_CONFIG: KnowledgeEmbeddingConfig = {
 };
 
 export const KNOWLEDGE_SOURCES_PAGE_SIZE = 20;
+
+/** Sources shown on the Knowledge landing page under "Recent sources". */
+export const RECENT_SOURCES_LIMIT = 8;
+
+/** Collections shown on the Knowledge landing page before "View all". */
+export const COLLECTIONS_OVERVIEW_LIMIT = 12;
 
 export const DEFAULT_RETRIEVAL_LIMIT = 8;
 

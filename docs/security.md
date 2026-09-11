@@ -44,6 +44,101 @@ Unknown or inaccessible workspaces return **404**, not 403, so their existence i
 - **Output shaping.** Services return mapped domain objects, never raw rows; errors leave through one envelope (`{ error: { code, message, details } }`) with no internals. Upstream AI gateway error bodies are logged server-side and replaced with a generic message, because that stream is read by anonymous visitors.
 - **Server-only code** is marked with the `server-only` package, so a client import fails the build rather than shipping database access to the browser.
 
+## Outbound requests
+
+Three paths let a customer choose an address our server will connect to: the
+knowledge URL importer, the integration connection tester, and the MCP client.
+A request that leaves from inside our network can reach things the browser
+never could — cloud metadata, internal admin panels, databases — so all three
+go through one module, `src/server/http/egress-guard.ts`. It is the only place
+in `src/` that resolves DNS, classifies an address, or constructs an HTTP
+dispatcher, and a test asserts that count stays at one.
+
+Per request, and again for every redirect hop:
+
+1. Scheme, embedded credentials, port and literal-address policy. A caller may
+   supply its own wording for these refusals, but the shared policy is applied
+   as a floor and cannot be widened.
+2. The name is resolved once, and **every** returned address is checked. One
+   public and one private answer is a refusal, not a choice.
+3. The socket is **pinned** to the addresses just validated, via a per-request
+   `undici.Agent` whose `connect.lookup` returns them. The URL keeps the
+   original hostname, so TLS verification, SNI and the Host header are
+   unaffected — only the destination address is fixed.
+4. Redirects are followed manually so 1–3 apply to each hop; an open redirect
+   is the usual route to `169.254.169.254`.
+5. One wall-clock budget covers the whole exchange, and the response body is
+   size-capped (except `text/event-stream`, which is bounded by the clock
+   instead, since its total size is not meaningful).
+
+Step 3 is what closes the window between checking a name and connecting to it.
+Without it, the HTTP client resolves the name a second time and that second
+answer decides the destination, so a resolver alternating a public and a
+private address walks through a check that only inspects the first answer. A
+dispatcher is built fresh per request and closed when the body is done:
+a pooled connection would outlive the check that authorised it.
+
+**What this does not claim.** Fixing the address is not protection against
+every network-level attack. It does nothing about hostility below DNS — ARP or
+BGP interference, a resolver that returns an attacker-controlled *public*
+address, or a proxy in front of us. For https it is TLS certificate
+verification, left at its default, that makes the pinned address prove its
+identity. If a forward proxy is ever introduced, it — not this — becomes the
+enforcement point; the two are alternatives, and claiming both would mean
+neither is authoritative.
+
+IPv6 is supported: the resolver's address family travels to the socket, and a
+test connects over real IPv6 to `::1`. Whether outbound public IPv6 works at
+all is a property of the deployment network and has to be verified there.
+
+## Tools that actually run
+
+MCP tool calls execute. They are the only tool path that does — the six
+built-in agent tools are still simulated — and the asymmetry is deliberate:
+MCP is the only one where running something is a decision a person actually
+made, because it is the only one with a per-tool grant, a content-hash pin on
+the definition that was approved, a risk classification and an approval gate.
+
+Five things happen for every call, in this order:
+
+1. **Re-read, then decide.** The grant, the tool definition and the server's
+   status are read at the point of use, not taken from the snapshot the turn
+   started with. A grant revoked, or a tool redefined, between the model being
+   told about a tool and the model asking for it refuses the call.
+2. **Both levels must hold.** The workspace granted the tool *and* the agent
+   attached it. Granting is an admin decision; attaching is agent
+   configuration, and it can only narrow what is already allowed.
+3. **Record before acting.** A `running` row is written before the request
+   leaves, so a process that dies mid-call leaves evidence that we tried. For a
+   destructive tool, "no row" and "did not run" must not look the same.
+   Refusals are recorded too: a log of successes cannot answer "did anything
+   try".
+4. **Anything destructive waits.** `requires_approval` cannot be switched off
+   for a destructive tool — the service enforces it and a `CHECK` constraint
+   backs that up. The call is queued, and approving it re-checks everything
+   from scratch: a click made before a grant was revoked does not run it.
+5. **The result is data.** What comes back is third-party text heading for a
+   model's context, so it is bounded and fenced with a per-call random nonce
+   plus an explicit instruction not to obey it. A fixed delimiter could be
+   closed by the tool's own output. The text is never rewritten to look safe:
+   a tool's output is evidence.
+
+**OAuth 2.1** is supported and is the preferred authentication: the server
+decides the scope, the user consents, and access can be revoked at the source.
+We are a public client with no secret (revision 2026-07-28 deprecates Dynamic
+Client Registration in favour of a published Client ID Metadata Document), so
+PKCE with S256 is required rather than optional, `resource` binds every token
+to one MCP server, and `iss` is checked against the issuer discovery started
+from. Every discovery, exchange and refresh goes through the egress guard
+above — a chain of URLs supplied by a customer's server is exactly the SSRF
+primitive that guard exists for.
+
+**What this does not claim.** A tool a person approved can still do whatever
+the remote server makes it do; the risk class is our classification of it, not
+a constraint on it. Prompt injection is assumed rather than prevented: the
+defence is that a call is gated on a human decision and bounded, not that a
+model cannot be talked into asking.
+
 ## The embed boundary
 
 The widget is the only path from an anonymous third-party page to a tenant's chatbot. See [ADR 0004](adr/0004-embed-security.md).
@@ -59,7 +154,7 @@ The widget is the only path from an anonymous third-party page to a tenant's cha
 
 The marketing site carries a chat demo that anyone can use without signing in. It is safe for a different reason than the widget: the widget is authorized, the demo has nothing to authorize.
 
-- It has **no tenant**. No workspace, no chatbot row, no knowledge base, no stored conversation. Its request contract accepts a list of messages and nothing else, so there is no identifier an attacker could point at another customer's data. Unknown fields are stripped by the schema.
+- It has **no tenant**. No workspace, no chatbot row, no knowledge, no stored conversation. Its request contract accepts a list of messages and nothing else, so there is no identifier an attacker could point at another customer's data. Unknown fields are stripped by the schema.
 - Its **module graph is the guarantee**. `src/features/public-chatbot/` and the demo route never import `src/server/db`, a repository, `src/server/auth`, an API key or an embed token. A test walks the graph from both entry points and fails on the first forbidden edge, because one careless import would quietly turn a marketing widget into a tenant-data endpoint.
 - It **answers only from the published documentation**, which is already tested to contain no credentials and no unsupported claims. The model is instructed to say when something is not supported rather than guess, and to treat anything in a visitor message that tries to change those rules as content.
 - **Nothing is persisted.** A visitor's question exists for the length of the request.
@@ -90,7 +185,7 @@ The client address comes from request headers (`cf-connecting-ip`, `x-forwarded-
 - `APP_SECRET` signs embed tokens and derives encryption keys; it is required in production and falls back to a fixed development value otherwise.
 - Integration credentials are encrypted at rest with AES-256-GCM and are never returned to the client — the UI shows only that a secret is configured, with a replace action.
 - Workspace API keys are stored as SHA-256 hashes with a display prefix; the full key is shown exactly once at creation.
-- Outbound requests initiated from user configuration (URL ingestion, webhook tests, workflow HTTP steps) reject non-HTTP(S) schemes and loopback, link-local and private address ranges, re-checking every redirect hop, with timeouts and response size caps.
+- Outbound requests initiated from user configuration (URL ingestion, integration connection tests, MCP) reject non-HTTP(S) schemes and loopback, link-local and private address ranges, re-check every redirect hop, pin the connection to the validated address, and carry timeouts and response size caps. See **Outbound requests** above for the whole path and its limits.
 
 ## AI-specific risks
 

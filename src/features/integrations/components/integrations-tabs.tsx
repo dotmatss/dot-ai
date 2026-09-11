@@ -15,6 +15,7 @@ export function IntegrationsTabs() {
         { href: base as Route, label: "Catalog" },
         { href: `${base}/api-keys` as Route, label: "API keys" },
         { href: `${base}/embeds` as Route, label: "Embeds" },
+        { href: `${base}/mcp` as Route, label: "MCP" },
       ]}
     />
   );

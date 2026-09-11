@@ -2,6 +2,7 @@ import "server-only";
 
 import { DEFAULT_MEMORY_CONFIG, DEFAULT_MODEL_CONFIG } from "@/features/agents/constants";
 import { normalizeToolSettings } from "@/features/agents/tools/registry";
+import { normalizeAgentMcpTools, type AgentMcpToolAttachment } from "@/features/mcp/agent-attachment";
 import type {
   Agent,
   AgentKnowledgeOption,
@@ -33,20 +34,21 @@ interface AgentRow {
   created_at: Date;
   updated_at: Date;
   conversation_count: string | number;
-  knowledge_base_ids: string[] | null;
+  collection_ids: string[] | null;
 }
 
 const SELECT_AGENT = `
   SELECT ag.id, ag.workspace_id, ag.name, ag.description, ag.status, ag.instructions, ag.model_config, ag.tools,
          ag.memory_config, ag.output_schema, ag.requires_approval, ag.created_at, ag.updated_at,
          (SELECT count(*) FROM conversations c WHERE c.agent_id = ag.id) AS conversation_count,
-         (SELECT array_agg(akb.knowledge_base_id) FROM agent_knowledge_bases akb WHERE akb.agent_id = ag.id) AS knowledge_base_ids
+         (SELECT array_agg(akb.collection_id) FROM agent_collections akb WHERE akb.agent_id = ag.id) AS collection_ids
   FROM agents ag
 `;
 
 function mapAgent(row: AgentRow): Agent {
-  const knowledgeBaseIds = row.knowledge_base_ids ?? [];
+  const collectionIds = row.collection_ids ?? [];
   const tools = normalizeToolSettings(row.tools);
+  const mcpTools = normalizeAgentMcpTools(row.tools);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -56,11 +58,12 @@ function mapAgent(row: AgentRow): Agent {
     instructions: row.instructions,
     modelConfig: { ...DEFAULT_MODEL_CONFIG, ...(row.model_config ?? {}) },
     tools,
+    mcpTools,
     memoryConfig: { ...DEFAULT_MEMORY_CONFIG, ...(row.memory_config ?? {}) },
     outputSchema: row.output_schema,
     requiresApproval: row.requires_approval,
-    knowledgeBaseIds,
-    knowledgeBaseCount: knowledgeBaseIds.length,
+    collectionIds,
+    collectionCount: collectionIds.length,
     enabledToolCount: tools.filter((tool) => tool.enabled).length,
     conversationCount: Number(row.conversation_count ?? 0),
     createdAt: toIsoRequired(row.created_at),
@@ -75,7 +78,7 @@ function toSummary(agent: Agent): AgentSummary {
     description: agent.description,
     status: agent.status,
     conversationCount: agent.conversationCount,
-    knowledgeBaseCount: agent.knowledgeBaseCount,
+    collectionCount: agent.collectionCount,
     enabledToolCount: agent.enabledToolCount,
     requiresApproval: agent.requiresApproval,
     createdAt: agent.createdAt,
@@ -143,7 +146,12 @@ export interface AgentPatch {
   instructions?: string;
   status?: AgentStatus;
   modelConfig?: AgentModelConfig;
-  tools?: AgentToolSetting[];
+  /**
+   * The WHOLE `tools` jsonb array, both halves. Never just the built-in
+   * settings: this column is replaced outright, so writing one half erases the
+   * other. `updateAgent` composes it.
+   */
+  tools?: Array<AgentToolSetting | AgentMcpToolAttachment>;
   memoryConfig?: AgentMemoryConfig;
   outputSchema?: AgentOutputSchema | null;
   requiresApproval?: boolean;
@@ -187,21 +195,21 @@ export async function updateAgentRow(workspaceId: string, agentId: string, patch
 export async function replaceAgentKnowledgeBases(
   workspaceId: string,
   agentId: string,
-  knowledgeBaseIds: string[],
+  collectionIds: string[],
   client: Queryable,
 ): Promise<void> {
-  await query("DELETE FROM agent_knowledge_bases WHERE workspace_id = $1 AND agent_id = $2", [workspaceId, agentId], client);
-  if (knowledgeBaseIds.length === 0) return;
+  await query("DELETE FROM agent_collections WHERE workspace_id = $1 AND agent_id = $2", [workspaceId, agentId], client);
+  if (collectionIds.length === 0) return;
   const params = new ParamBuilder();
-  const rows = knowledgeBaseIds.map((id) => `(${params.add(agentId)}, ${params.add(id)}, ${params.add(workspaceId)})`);
-  await query(`INSERT INTO agent_knowledge_bases (agent_id, knowledge_base_id, workspace_id) VALUES ${rows.join(", ")}`, params.values, client);
+  const rows = collectionIds.map((id) => `(${params.add(agentId)}, ${params.add(id)}, ${params.add(workspaceId)})`);
+  await query(`INSERT INTO agent_collections (agent_id, collection_id, workspace_id) VALUES ${rows.join(", ")}`, params.values, client);
 }
 
-/** Tenancy guard: knowledge bases may only be attached from the caller's workspace. */
+/** Tenancy guard: collections may only be attached from the caller's workspace. */
 export async function countWorkspaceKnowledgeBases(workspaceId: string, ids: string[], client?: Queryable): Promise<number> {
   if (ids.length === 0) return 0;
   const row = await queryOne<{ count: string }>(
-    "SELECT count(*) AS count FROM knowledge_bases WHERE workspace_id = $1 AND id = ANY($2::uuid[])",
+    "SELECT count(*) AS count FROM knowledge_collections WHERE workspace_id = $1 AND id = ANY($2::uuid[])",
     [workspaceId, ids],
     client,
   );
@@ -216,9 +224,9 @@ export async function deleteAgentRow(workspaceId: string, agentId: string): Prom
 export async function listKnowledgeOptions(workspaceId: string, agentId: string): Promise<AgentKnowledgeOption[]> {
   const rows = await query<{ id: string; name: string; status: string; source_count: string; attached: boolean }>(
     `SELECT kb.id, kb.name, kb.status,
-            (SELECT count(*) FROM knowledge_sources ks WHERE ks.knowledge_base_id = kb.id) AS source_count,
-            EXISTS (SELECT 1 FROM agent_knowledge_bases akb WHERE akb.knowledge_base_id = kb.id AND akb.agent_id = $2) AS attached
-     FROM knowledge_bases kb
+            (SELECT count(*) FROM knowledge_sources ks WHERE ks.collection_id = kb.id) AS source_count,
+            EXISTS (SELECT 1 FROM agent_collections akb WHERE akb.collection_id = kb.id AND akb.agent_id = $2) AS attached
+     FROM knowledge_collections kb
      WHERE kb.workspace_id = $1
      ORDER BY kb.name`,
     [workspaceId, agentId],

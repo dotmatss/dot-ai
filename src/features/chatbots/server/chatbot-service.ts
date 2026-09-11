@@ -96,11 +96,11 @@ export async function updateChatbot(ctx: ActorContext, chatbotId: string, input:
     const existing = await findChatbotById(ctx.workspaceId, chatbotId, client);
     if (!existing) throw ApiError.notFound("Chatbot not found");
 
-    if (input.knowledgeBaseIds) {
-      const unique = [...new Set(input.knowledgeBaseIds)];
+    if (input.collectionIds) {
+      const unique = [...new Set(input.collectionIds)];
       const owned = await countWorkspaceKnowledgeBases(ctx.workspaceId, unique, client);
       if (owned !== unique.length) {
-        throw ApiError.validation({ knowledgeBaseIds: ["One or more knowledge bases do not belong to this workspace"] });
+        throw ApiError.validation({ collectionIds: ["One or more collections do not belong to this workspace"] });
       }
       await replaceChatbotKnowledgeBases(ctx.workspaceId, chatbotId, unique, client);
     }

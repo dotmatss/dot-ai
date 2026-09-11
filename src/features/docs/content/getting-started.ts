@@ -29,7 +29,7 @@ export const GETTING_STARTED_PAGES: DocPage[] = [
           },
           {
             title: "Ground it",
-            body: "Create a knowledge base under Knowledge, add a document or a URL, wait for it to reach Ready, then attach it on the chatbot's Knowledge tab. Answers will cite what they used.",
+            body: "Create a collection under Knowledge, add a document or a URL, wait for it to reach Ready, then attach it on the chatbot's Knowledge tab. Answers will cite what they used.",
           },
           {
             title: "Test it",
@@ -73,7 +73,7 @@ export const GETTING_STARTED_PAGES: DocPage[] = [
         type: "list",
         items: [
           "[Core concepts](/docs/concepts) — workspaces, roles, channels and how isolation works.",
-          "[Knowledge base](/docs/knowledge-base) — how retrieval-augmented generation works here.",
+          "[Knowledge](/docs/knowledge) — collections, and how retrieval-augmented generation works here.",
           "[API authentication](/docs/api/authentication) — create a key and make your first call.",
         ],
       },

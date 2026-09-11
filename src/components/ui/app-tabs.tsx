@@ -184,15 +184,32 @@ export function AppTab({ value, variant = "underline", className, children, ...p
   );
 }
 
-export function AppTabPanel({ value, className, children }: { value: string; className?: string; children: ReactNode }) {
+export function AppTabPanel({
+  value,
+  className,
+  keepMounted,
+  children,
+}: {
+  value: string;
+  className?: string;
+  /**
+   * Keep the panel in the tree while another tab is shown, hidden rather than
+   * unmounted. Use it when the panel holds state a reader would be upset to
+   * lose — a half-filled form, a scroll position — and accept the extra DOM.
+   */
+  keepMounted?: boolean;
+  children: ReactNode;
+}) {
   const ctx = useTabsContext("AppTabPanel");
-  if (ctx.value !== value) return null;
+  const selected = ctx.value === value;
+  if (!selected && !keepMounted) return null;
   return (
     <div
       role="tabpanel"
       id={`${ctx.baseId}-panel-${value}`}
       aria-labelledby={`${ctx.baseId}-tab-${value}`}
-      tabIndex={0}
+      hidden={!selected}
+      tabIndex={selected ? 0 : -1}
       className={cn("focus-ring rounded-md", className)}
     >
       {children}

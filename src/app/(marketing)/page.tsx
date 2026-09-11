@@ -46,7 +46,7 @@ export default function LandingPage() {
               Everything the assistant needs, in one workspace
             </h2>
             <p className="mt-4 text-base leading-7 text-foreground-secondary">
-              Each piece works on its own and they compose: a chatbot can answer from a knowledge base, an agent can call
+              Each piece works on its own and they compose: a chatbot can answer from a collection, an agent can call
               a workflow, and every conversation lands in the same inbox and CRM.
             </p>
           </div>

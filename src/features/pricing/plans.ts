@@ -29,7 +29,7 @@ export const PLANS: ReadonlyArray<Plan> = [
     cta: { label: "Create a workspace", href: "/sign-up" as Route },
     features: [
       { label: "Build chatbots and put them on your website", docsHref: "/docs/chatbots" as Route },
-      { label: "Ground answers in your own knowledge base", docsHref: "/docs/knowledge-base" as Route },
+      { label: "Ground answers in your own collections", docsHref: "/docs/knowledge" as Route },
       { label: "Test in the playground before publishing", docsHref: "/docs/chatbots" as Route },
       { label: "Conversation inbox with AI summaries", docsHref: "/docs/conversations" as Route },
     ],
@@ -92,8 +92,8 @@ export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   chatbots: "Chatbots",
   agents: "Agents",
   workflows: "Workflows",
-  knowledgeBases: "Knowledge bases",
-  knowledgeSources: "Sources per knowledge base",
+  collections: "Collections",
+  knowledgeSources: "Sources per collection",
   members: "Workspace members",
   apiAccess: "API access",
   crmContacts: "CRM contacts",
@@ -105,7 +105,7 @@ export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
 
 /** Grouping for the comparison table, so it reads as a product, not a list. */
 export const ENTITLEMENT_GROUPS: ReadonlyArray<{ title: string; keys: EntitlementKey[] }> = [
-  { title: "Build", keys: ["chatbots", "agents", "workflows", "knowledgeBases", "knowledgeSources"] },
+  { title: "Build", keys: ["chatbots", "agents", "workflows", "collections", "knowledgeSources"] },
   { title: "Connect", keys: ["apiAccess", "integrations", "crmContacts", "members"] },
   { title: "Usage", keys: ["messagesPerMonth", "tokensPerMonth", "workflowRunsPerMonth"] },
 ];

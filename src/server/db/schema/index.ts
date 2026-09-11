@@ -23,6 +23,8 @@
  *     policy (see `docs/feature-conventions.md` for the required policy body)
  *   - the `set_updated_at()` trigger function and its per-table triggers
  *   - the `pgcrypto` and `citext` extensions
+ *   - `CHECK` constraints, such as the one on `mcp_tool_grants` that stops a
+ *     destructive grant having its approval requirement disabled
  *
  * Therefore: NEVER apply the output of `drizzle-kit generate` unreviewed. Read
  * it, delete any spurious `DROP`, and append the RLS block before committing.
@@ -39,3 +41,4 @@ export * from "@/server/db/schema/workflows";
 export * from "@/server/db/schema/crm";
 export * from "@/server/db/schema/conversations";
 export * from "@/server/db/schema/platform";
+export * from "@/server/db/schema/mcp";

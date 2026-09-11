@@ -43,7 +43,7 @@ export interface ChatbotPerformanceRow {
 }
 
 export interface KnowledgeStatusSummary {
-  knowledgeBases: number;
+  collections: number;
   ready: number;
   processing: number;
   error: number;

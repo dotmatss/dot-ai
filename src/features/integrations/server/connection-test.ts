@@ -1,55 +1,48 @@
 import "server-only";
 
-import { lookup } from "node:dns/promises";
 import { createHmac } from "node:crypto";
 
 import { INTEGRATION_TEST_TIMEOUT_MS } from "@/features/integrations/constants";
-import { isBlockedIpAddress } from "@/features/knowledge/url-safety";
 import { checkWebhookUrl } from "@/features/integrations/url-safety";
+import { createGuardedFetch, EgressBlockedError } from "@/server/http/egress-guard";
 
 /**
  * Server-side delivery of a test payload.
  *
  * The request originates inside our network, so the destination is untrusted
- * input in the strongest sense. Controls, in order:
+ * input in the strongest sense. The destination policy, the DNS check, the
+ * pinning of the socket to the validated address and the per-hop redirect
+ * re-validation are all the shared egress guard's, because that logic must have
+ * one implementation and one test suite rather than a copy per caller.
  *
- *  1. scheme, credential, port and literal-address policy (`checkWebhookUrl`);
- *  2. DNS resolution checked against the same address policy, closing the gap
- *     where a public name points at private space;
- *  3. redirects followed manually, with 1 and 2 re-applied to every hop -
- *     an open redirect is the usual way to smuggle a request to 169.254.169.254;
- *  4. one wall-clock budget for the whole exchange, redirects included;
- *  5. the response body is discarded, never parsed and never echoed back, so a
- *     caller cannot use this as a read proxy for internal services.
+ * What remains here is what is specific to delivering a test payload: the
+ * signature scheme, and the wording of the result.
  *
- * The returned message names the host and the status code only. It never
- * contains the URL (a Slack incoming webhook URL is itself a credential), the
- * signing secret, or any response content.
+ * The response body is discarded, never parsed and never echoed back, so a
+ * caller cannot use this as a read proxy for internal services. The returned
+ * message names the host and the status code only. It never contains the URL (a
+ * Slack incoming webhook URL is itself a credential), the signing secret, or
+ * any response content.
  */
 
 const MAX_REDIRECTS = 2;
 const USER_AGENT = "dot-integrations/1.0";
 
+const deliver = createGuardedFetch({
+  timeoutMs: INTEGRATION_TEST_TIMEOUT_MS,
+  maxRedirects: MAX_REDIRECTS,
+  // The body is cancelled unread, so there is nothing to cap. A receiver that
+  // answers a test ping with a large body is odd, not dangerous.
+  maxResponseBytes: Number.POSITIVE_INFINITY,
+  // `checkWebhookUrl` permits http, which is the only way to test a receiver in
+  // local development. The address policy still applies to it.
+  requireHttps: false,
+});
+
 export interface DeliveryResult {
   ok: boolean;
   message: string;
 }
-
-async function assertPublicHost(hostname: string): Promise<void> {
-  const host = hostname.replace(/^\[/, "").replace(/\]$/, "");
-  let addresses: Array<{ address: string }>;
-  try {
-    addresses = await lookup(host, { all: true, verbatim: true });
-  } catch {
-    throw new DeliveryError(`Could not resolve ${hostname}.`);
-  }
-  if (addresses.length === 0) throw new DeliveryError(`Could not resolve ${hostname}.`);
-  if (addresses.some((entry) => isBlockedIpAddress(entry.address))) {
-    throw new DeliveryError(`${hostname} resolves to a private address, which cannot be called.`);
-  }
-}
-
-class DeliveryError extends Error {}
 
 /** Signature scheme documented for webhook receivers: HMAC-SHA256 over `timestamp.body`. */
 export function signPayload(body: string, secret: string, timestampSeconds: number): string {
@@ -62,6 +55,37 @@ export interface PostPayloadOptions {
   signingSecret?: string | undefined;
   /** Used in the result message instead of the host when the URL itself is a secret. */
   displayName?: string;
+}
+
+function hostOf(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** Phrases a refusal without ever including the URL or the response body. */
+function failureMessage(error: unknown, label: string): string {
+  if (error instanceof EgressBlockedError) {
+    switch (error.kind) {
+      case "redirect-limit":
+        return `${label} redirects too many times.`;
+      case "redirect-location":
+        return `${label} returned a redirect without a destination.`;
+      default:
+        // A refusal on a later hop is a refusal of where the receiver sent us,
+        // which is worth distinguishing from a bad URL.
+        return error.hop > 0
+          ? `${label} redirects to a location that cannot be called. ${error.message}`
+          : error.message;
+    }
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return `${label} did not respond within ${INTEGRATION_TEST_TIMEOUT_MS / 1000} seconds.`;
+  }
+  return `Could not reach ${label}: ${error instanceof Error ? error.message : "request failed"}.`;
 }
 
 export async function postTestPayload(options: PostPayloadOptions): Promise<DeliveryResult> {
@@ -79,54 +103,21 @@ export async function postTestPayload(options: PostPayloadOptions): Promise<Deli
     headers["X-Dot-Signature"] = `t=${timestamp},v1=${signPayload(serialized, options.signingSecret, timestamp)}`;
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), INTEGRATION_TEST_TIMEOUT_MS);
-  let target = initial.url;
-  const label = () => options.displayName ?? target.hostname;
+  // After a redirect the interesting host is the one that answered, so the
+  // label prefers the final URL when there is one.
+  const label = (finalUrl?: string) => options.displayName ?? hostOf(finalUrl) ?? initial.url.hostname;
 
   try {
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      await assertPublicHost(target.hostname);
+    const response = await deliver(options.url, { method: "POST", headers, body: serialized });
 
-      let response: Response;
-      try {
-        response = await fetch(target, {
-          method: "POST",
-          headers,
-          body: serialized,
-          redirect: "manual",
-          signal: controller.signal,
-          cache: "no-store",
-        });
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return { ok: false, message: `${label()} did not respond within ${INTEGRATION_TEST_TIMEOUT_MS / 1000} seconds.` };
-        }
-        return { ok: false, message: `Could not reach ${label()}: ${error instanceof Error ? error.message : "request failed"}.` };
-      }
+    // Nothing in the body is trusted or needed; release the socket immediately.
+    await response.body?.cancel().catch(() => undefined);
 
-      // Nothing in the body is trusted or needed; release the socket immediately.
-      await response.body?.cancel().catch(() => undefined);
-
-      if (response.status < 300 || response.status >= 400) {
-        return response.ok
-          ? { ok: true, message: `${label()} accepted the test payload (HTTP ${response.status}).` }
-          : { ok: false, message: `${label()} responded with HTTP ${response.status}.` };
-      }
-
-      const location = response.headers.get("location");
-      if (!location) return { ok: false, message: `${label()} returned a redirect without a destination.` };
-      if (hop === MAX_REDIRECTS) return { ok: false, message: `${label()} redirects too many times.` };
-
-      const next = checkWebhookUrl(new URL(location, target).href);
-      if (!next.ok) return { ok: false, message: `${label()} redirects to a location that cannot be called. ${next.reason}` };
-      target = next.url;
-    }
-    return { ok: false, message: `${label()} redirects too many times.` };
+    const who = label(response.url);
+    return response.ok
+      ? { ok: true, message: `${who} accepted the test payload (HTTP ${response.status}).` }
+      : { ok: false, message: `${who} responded with HTTP ${response.status}.` };
   } catch (error) {
-    if (error instanceof DeliveryError) return { ok: false, message: error.message };
-    throw error;
-  } finally {
-    clearTimeout(timer);
+    return { ok: false, message: failureMessage(error, label()) };
   }
 }

@@ -142,7 +142,7 @@ describe.skipIf(!hasDatabase)("chatbot chat pipeline (PostgreSQL)", () => {
     expect(messages[1]?.role).toBe("assistant");
     expect(messages[1]?.content).toContain("You asked");
     expect(messages[1]?.usage?.outputTokens).toBeGreaterThan(0);
-    // No knowledge base is attached, so no citations are invented.
+    // No collection is attached, so no citations are invented.
     expect(messages[1]?.sources).toBeNull();
 
     const usage = await query<{ kind: string; total: string }>(

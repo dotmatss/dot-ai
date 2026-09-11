@@ -1,5 +1,5 @@
-export const KNOWLEDGE_BASE_STATUSES = ["empty", "processing", "ready", "error"] as const;
-export type KnowledgeBaseStatus = (typeof KNOWLEDGE_BASE_STATUSES)[number];
+export const COLLECTION_STATUSES = ["empty", "processing", "ready", "error"] as const;
+export type CollectionStatus = (typeof COLLECTION_STATUSES)[number];
 
 export const KNOWLEDGE_SOURCE_TYPES = ["text", "url", "file"] as const;
 export type KnowledgeSourceType = (typeof KNOWLEDGE_SOURCE_TYPES)[number];
@@ -35,9 +35,9 @@ export function isSourceInFlight(status: KnowledgeSourceStatus): boolean {
 }
 
 /**
- * How a knowledge base's content was vectorized. Stored on the row so a later
- * provider or dimension change is detectable per knowledge base instead of
- * silently mixing incompatible vectors.
+ * How a source's content was vectorized. Stored on the source row, beside the
+ * vectors it describes, so a later provider or dimension change is detectable
+ * per document instead of silently mixing incompatible vectors.
  */
 export interface KnowledgeEmbeddingConfig {
   provider: string;
@@ -46,11 +46,22 @@ export interface KnowledgeEmbeddingConfig {
   chunkOverlapTokens: number;
 }
 
-export interface KnowledgeBaseSummary {
+/* -------------------------------------------------------------------------- */
+/* Collections                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A collection is a logical grouping of sources, and only that. It carries no
+ * retrieval settings: what an agent retrieves is decided by which collections
+ * it is given, and how it retrieves is the agent's own configuration.
+ *
+ * `status` is a rollup of the sources inside it, recomputed by the pipeline.
+ */
+export interface CollectionSummary {
   id: string;
   name: string;
   description: string | null;
-  status: KnowledgeBaseStatus;
+  status: CollectionStatus;
   sourceCount: number;
   readySourceCount: number;
   failedSourceCount: number;
@@ -60,13 +71,16 @@ export interface KnowledgeBaseSummary {
   updatedAt: string;
 }
 
-export interface KnowledgeBase extends KnowledgeBaseSummary {
+export interface Collection extends CollectionSummary {
   workspaceId: string;
-  embeddingConfig: KnowledgeEmbeddingConfig;
-  /** Chatbots and agents that would lose this knowledge base if it is deleted. */
+  /** Chatbots and agents that would lose this grounding if it is deleted. */
   attachedChatbotCount: number;
   attachedAgentCount: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Sources                                                                    */
+/* -------------------------------------------------------------------------- */
 
 /** Non-secret ingestion details worth surfacing in the UI. */
 export interface KnowledgeSourceMetadata {
@@ -78,7 +92,10 @@ export interface KnowledgeSourceMetadata {
 
 export interface KnowledgeSource {
   id: string;
-  knowledgeBaseId: string;
+  /** NULL means Unorganized: added and indexed, but not filed into a collection. */
+  collectionId: string | null;
+  /** Denormalized for listings that span collections; NULL when unorganized. */
+  collectionName: string | null;
   type: KnowledgeSourceType;
   name: string;
   uri: string | null;
@@ -95,14 +112,49 @@ export interface KnowledgeSource {
   updatedAt: string;
 }
 
-export interface KnowledgeBaseListFilters {
+/**
+ * Which documents a listing covers.
+ *
+ * "unorganized" is deliberately its own kind rather than a collection id of
+ * NULL passed around as a string: the distinction between "everything" and
+ * "the things nobody has filed" is one an accidental `?? null` should not be
+ * able to blur.
+ */
+export type KnowledgeScope =
+  | { kind: "all" }
+  | { kind: "unorganized" }
+  | { kind: "collection"; collectionId: string };
+
+export const KNOWLEDGE_SCOPE_ALL: KnowledgeScope = { kind: "all" };
+export const KNOWLEDGE_SCOPE_UNORGANIZED: KnowledgeScope = { kind: "unorganized" };
+
+export function collectionScope(collectionId: string): KnowledgeScope {
+  return { kind: "collection", collectionId };
+}
+
+/**
+ * Everything the Knowledge landing page shows, in one payload: the collections,
+ * the most recently added documents across all of them, and how many are still
+ * waiting to be filed.
+ */
+export interface KnowledgeOverview {
+  collections: CollectionSummary[];
+  collectionTotal: number;
+  recentSources: KnowledgeSource[];
+  unorganizedCount: number;
+  totalSourceCount: number;
+}
+
+export interface CollectionListFilters {
   q?: string;
-  status?: KnowledgeBaseStatus;
+  status?: CollectionStatus;
   page?: number;
   pageSize?: number;
 }
 
 export interface KnowledgeSourceListFilters {
+  q?: string;
+  status?: KnowledgeSourceStatus;
   page?: number;
   pageSize?: number;
 }

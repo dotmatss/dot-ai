@@ -97,7 +97,7 @@ export const PRIVACY_POLICY: LegalDocument = {
       type: "list",
       items: [
         "To run the service: authenticate you, keep you signed in, and show you your workspace.",
-        "To provide the features you use: answer questions with a chatbot, retrieve from your knowledge base, run workflows, and keep your CRM records.",
+        "To provide the features you use: answer questions with a chatbot, retrieve from your knowledge collections, run workflows, and keep your CRM records.",
         "To keep the service secure and available: rate limiting, abuse prevention, and an activity log of changes within a workspace.",
         "To meter usage, so consumption can be measured and, in future, billed.",
         "To support you when you ask us to look at something.",
@@ -118,7 +118,7 @@ export const PRIVACY_POLICY: LegalDocument = {
     {
       type: "list",
       items: [
-        "When a chatbot answers, the visitor's message, the relevant chunks retrieved from your knowledge base, and the chatbot's instructions are sent to a model provider through an AI gateway.",
+        "When a chatbot answers, the visitor's message, the relevant chunks retrieved from your knowledge collecse, and the chatbot's instructions are sent to a model provider through an AI gateway.",
         "The reply, its citations and the token counts are stored in your workspace as part of the conversation.",
         "Embeddings are numeric representations of your knowledge chunks. They are currently produced by a local deterministic provider that makes no external call.",
         "We do not use your content to train any model, and the application has no mechanism to do so.",
@@ -213,7 +213,7 @@ export const PRIVACY_POLICY: LegalDocument = {
         "Every workspace record carries a workspace identifier, queries always filter on it, and the database enforces the same boundary independently with row-level security.",
         "API keys are stored only as hashes with a short display prefix, and are shown once at creation.",
         "Integration credentials are encrypted at rest and are never returned to the browser.",
-        "Requests that a user's own configuration triggers, such as fetching a URL for a knowledge base, refuse private and loopback addresses and re-check every redirect.",
+        "Requests that a user's own configuration triggers, such as fetching a URL for a knowledge source, refuse private and loopback addresses and re-check every redirect.",
       ],
     },
     {

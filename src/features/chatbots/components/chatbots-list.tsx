@@ -63,7 +63,7 @@ function ChatbotRow({ chatbot, onDelete }: { chatbot: ChatbotSummary; onDelete?:
         <ChatbotStatusBadge status={chatbot.status} />
       </AppTableCell>
       <AppTableCell className="tabular-nums">{chatbot.conversationCount}</AppTableCell>
-      <AppTableCell className="tabular-nums">{chatbot.knowledgeBaseCount}</AppTableCell>
+      <AppTableCell className="tabular-nums">{chatbot.collectionCount}</AppTableCell>
       <AppTableCell className="whitespace-nowrap text-foreground-muted">
         <AppRelativeTime value={chatbot.updatedAt} />
       </AppTableCell>
@@ -176,7 +176,7 @@ export function ChatbotsList() {
                       <AppEmptyState
                         icon={<Bot aria-hidden />}
                         title="Create your first chatbot"
-                        description="Chatbots answer visitor questions using your instructions and knowledge bases, and can be embedded on any website."
+                        description="Chatbots answer visitor questions using your instructions and collections, and can be embedded on any website."
                         action={<CreateChatbotButton />}
                       />
                     )}

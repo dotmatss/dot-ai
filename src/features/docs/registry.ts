@@ -25,7 +25,7 @@ export const DOC_SECTIONS: DocSection[] = [
   },
   {
     title: "Building",
-    pages: pick(PLATFORM_PAGES, ["chatbots", "agents", "workflows", "knowledge-base"]),
+    pages: pick(PLATFORM_PAGES, ["chatbots", "agents", "workflows", "knowledge"]),
   },
   {
     title: "Operating",

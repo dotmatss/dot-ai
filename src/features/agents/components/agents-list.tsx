@@ -76,7 +76,7 @@ function AgentRow({ agent, onDelete }: { agent: AgentSummary; onDelete?: (agent:
           {agent.enabledToolCount}
         </span>
       </AppTableCell>
-      <AppTableCell className="tabular-nums">{agent.knowledgeBaseCount}</AppTableCell>
+      <AppTableCell className="tabular-nums">{agent.collectionCount}</AppTableCell>
       <AppTableCell className="whitespace-nowrap text-foreground-muted">
         <AppRelativeTime value={agent.updatedAt} />
       </AppTableCell>
@@ -193,7 +193,7 @@ export function AgentsList() {
                       <AppEmptyState
                         icon={<Cpu aria-hidden />}
                         title="Create your first agent"
-                        description="Agents follow your instructions, use tools, read your knowledge bases and can pause for human approval before they act."
+                        description="Agents follow your instructions, use tools, read your collections and can pause for human approval before they act."
                         action={<CreateAgentButton />}
                       />
                     )}

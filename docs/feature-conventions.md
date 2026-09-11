@@ -80,6 +80,11 @@ CREATE POLICY <t>_workspace_isolation ON <t>
 - Charts and skeletons need tokens too: a bar track or an axis line hard-coded to a light grey disappears on a dark ground.
 - The embeddable widget is deliberately exempt. It renders in the customer's brand colour on the customer's site and must not follow this application's theme. See `docs/theming.md`.
 
+**Outbound requests to a customer-configured address**
+- Use `createGuardedFetch` from `src/server/http/egress-guard.ts`. It is the single implementation of the destination policy: scheme and port, embedded credentials, private-address literals, DNS resolution checked against the same policy, manual redirects re-checked per hop, one wall-clock budget, and a response size cap. Do not write another private-address or DNS check; `tests/unit/mcp-isolation.test.ts` asserts there is only one.
+- When handing the network to a library, hand it that fetch. The MCP SDK takes a `fetch` option, which is what keeps the controls inside its request path rather than beside it.
+- Never put a destination URL or a credential in an error message or a log line. An endpoint can carry a token in its path, which is why probe results name the host and the condition only.
+
 **Crossing feature boundaries**
 - A feature never writes SQL over another feature's tables. If feature A needs a view of feature B's data, B exports a named read model from its own `server/` folder and A imports it. `listEmbedDeployments()` in `src/features/chatbots/server/embed-deployments.ts` is the reference: the developer area renders it, but the rules about what makes a chatbot reachable stay owned by the chatbots feature.
 - Shared display metadata is imported, not copied. The settings Usage page reads `USAGE_KIND_META` from the analytics feature rather than restating the labels.

@@ -1,10 +1,18 @@
 import { z } from "zod";
 
 import { DEFAULT_RETRIEVAL_LIMIT, TEXT_SOURCE_MAX_CHARS } from "@/features/knowledge/constants";
-import { KNOWLEDGE_BASE_STATUSES } from "@/features/knowledge/types";
+import {
+  COLLECTION_STATUSES,
+  KNOWLEDGE_SCOPE_ALL,
+  KNOWLEDGE_SCOPE_UNORGANIZED,
+  KNOWLEDGE_SOURCE_STATUSES,
+  collectionScope,
+  type KnowledgeScope,
+} from "@/features/knowledge/types";
 import { checkIngestUrl } from "@/features/knowledge/url-safety";
 
-export const knowledgeBaseStatusSchema = z.enum(KNOWLEDGE_BASE_STATUSES);
+export const collectionStatusSchema = z.enum(COLLECTION_STATUSES);
+export const knowledgeSourceStatusSchema = z.enum(KNOWLEDGE_SOURCE_STATUSES);
 
 const nameSchema = z
   .string()
@@ -14,14 +22,14 @@ const nameSchema = z
 
 const descriptionSchema = z.string().trim().max(280, { error: "Keep the description under 280 characters" });
 
-export const createKnowledgeBaseSchema = z.object({
+export const createCollectionSchema = z.object({
   name: nameSchema,
   description: descriptionSchema.optional(),
 });
 
-export type CreateKnowledgeBaseInput = z.infer<typeof createKnowledgeBaseSchema>;
+export type CreateCollectionInput = z.infer<typeof createCollectionSchema>;
 
-export const updateKnowledgeBaseSchema = z
+export const updateCollectionSchema = z
   .object({
     name: nameSchema,
     description: descriptionSchema.nullable(),
@@ -29,19 +37,54 @@ export const updateKnowledgeBaseSchema = z
   .partial()
   .refine((value) => Object.keys(value).length > 0, { error: "Nothing to update" });
 
-export type UpdateKnowledgeBaseInput = z.input<typeof updateKnowledgeBaseSchema>;
+export type UpdateCollectionInput = z.input<typeof updateCollectionSchema>;
 
-export const knowledgeBaseListQuerySchema = z.object({
+export const collectionListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().trim().max(200).optional(),
-  status: knowledgeBaseStatusSchema.optional(),
+  status: collectionStatusSchema.optional(),
 });
+
+/**
+ * Which documents a listing covers, as it travels in a query string.
+ *
+ * "all" and "unorganized" are reserved words rather than magic ids, so a
+ * collection whose id happened to be typed into the URL can never be confused
+ * with either — and a caller that forgets the parameter gets "all" and not, by
+ * accident, everything unfiled.
+ */
+export const knowledgeScopeParamSchema = z.union([z.literal("all"), z.literal("unorganized"), z.uuid()]);
+
+export function toKnowledgeScope(param: z.infer<typeof knowledgeScopeParamSchema>): KnowledgeScope {
+  if (param === "all") return KNOWLEDGE_SCOPE_ALL;
+  if (param === "unorganized") return KNOWLEDGE_SCOPE_UNORGANIZED;
+  return collectionScope(param);
+}
 
 export const knowledgeSourceListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  q: z.string().trim().max(200).optional(),
+  status: knowledgeSourceStatusSchema.optional(),
+  scope: knowledgeScopeParamSchema.default("all"),
 });
+
+/** Adding a document straight into a collection, or to Unorganized with null. */
+export const createSourceTargetSchema = z.object({
+  collectionId: z.uuid().nullish(),
+});
+
+/**
+ * Filing a document. `collectionId: null` moves it back to Unorganized, which
+ * is why this is nullable rather than optional — omitting the key and clearing
+ * it have to be distinguishable.
+ */
+export const moveSourceSchema = z.object({
+  collectionId: z.uuid({ error: "Choose a collection" }).nullable(),
+});
+
+export type MoveSourceInput = z.infer<typeof moveSourceSchema>;
 
 /**
  * A URL that passed every SSRF guard, normalized to its canonical href. The
@@ -91,12 +134,12 @@ export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchSchema>;
 /* Form-facing schemas                                                        */
 /* -------------------------------------------------------------------------- */
 
-export const knowledgeBaseSettingsFormSchema = z.object({
+export const collectionSettingsFormSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
 });
 
-export type KnowledgeBaseSettingsFormValues = z.infer<typeof knowledgeBaseSettingsFormSchema>;
+export type CollectionSettingsFormValues = z.infer<typeof collectionSettingsFormSchema>;
 
 export const textSourceFormSchema = createTextSourceSchema.omit({ type: true });
 export type TextSourceFormValues = z.infer<typeof textSourceFormSchema>;

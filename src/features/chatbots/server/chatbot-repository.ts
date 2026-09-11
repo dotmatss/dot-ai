@@ -15,7 +15,7 @@ import type {
   ChatbotSummary,
 } from "@/features/chatbots/types";
 import { query, queryOne, withDb } from "@/server/db/client";
-import { chatbotKnowledgeBases, chatbots, conversations, knowledgeBases, knowledgeSources } from "@/server/db/schema";
+import { chatbotCollections, chatbots, conversations, knowledgeCollections, knowledgeSources } from "@/server/db/schema";
 import { normalizePage, toIso, toIsoRequired, toPaginated } from "@/server/db/sql";
 import type { Paginated } from "@/types/pagination";
 
@@ -55,9 +55,9 @@ const chatbotSelection = {
   conversationCount: sql<number>`(SELECT count(*) FROM ${conversations} WHERE ${conversations.chatbotId} = ${chatbots.id})`.mapWith(
     Number,
   ),
-  knowledgeBaseIds: sql<
+  collectionIds: sql<
     string[] | null
-  >`(SELECT array_agg(${chatbotKnowledgeBases.knowledgeBaseId}) FROM ${chatbotKnowledgeBases} WHERE ${chatbotKnowledgeBases.chatbotId} = ${chatbots.id})`,
+  >`(SELECT array_agg(${chatbotCollections.collectionId}) FROM ${chatbotCollections} WHERE ${chatbotCollections.chatbotId} = ${chatbots.id})`,
 };
 
 function mapChatbot(row: {
@@ -76,9 +76,9 @@ function mapChatbot(row: {
   createdAt: Date;
   updatedAt: Date;
   conversationCount: number;
-  knowledgeBaseIds: string[] | null;
+  collectionIds: string[] | null;
 }): Chatbot {
-  const knowledgeBaseIds = row.knowledgeBaseIds ?? [];
+  const collectionIds = row.collectionIds ?? [];
   return {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -94,8 +94,8 @@ function mapChatbot(row: {
     appearance: { ...DEFAULT_APPEARANCE, ...((row.appearance ?? {}) as Partial<ChatbotAppearance>) },
     allowedDomains: row.allowedDomains ?? [],
     embedKey: row.embedKey,
-    knowledgeBaseIds,
-    knowledgeBaseCount: knowledgeBaseIds.length,
+    collectionIds,
+    collectionCount: collectionIds.length,
     conversationCount: Number(row.conversationCount ?? 0),
     createdAt: toIsoRequired(row.createdAt),
     updatedAt: toIsoRequired(row.updatedAt),
@@ -110,7 +110,7 @@ function toSummary(chatbot: Chatbot): ChatbotSummary {
     description: chatbot.description,
     status: chatbot.status,
     conversationCount: chatbot.conversationCount,
-    knowledgeBaseCount: chatbot.knowledgeBaseCount,
+    collectionCount: chatbot.collectionCount,
     createdAt: chatbot.createdAt,
     updatedAt: chatbot.updatedAt,
   };
@@ -256,23 +256,23 @@ export async function updateChatbotRow(
 export async function replaceChatbotKnowledgeBases(
   workspaceId: string,
   chatbotId: string,
-  knowledgeBaseIds: string[],
+  collectionIds: string[],
   client: PoolClient,
 ): Promise<void> {
   await withDb(
     (db) =>
       db
-        .delete(chatbotKnowledgeBases)
-        .where(and(eq(chatbotKnowledgeBases.workspaceId, workspaceId), eq(chatbotKnowledgeBases.chatbotId, chatbotId))),
+        .delete(chatbotCollections)
+        .where(and(eq(chatbotCollections.workspaceId, workspaceId), eq(chatbotCollections.chatbotId, chatbotId))),
     client,
   );
-  if (knowledgeBaseIds.length === 0) return;
+  if (collectionIds.length === 0) return;
   await withDb(
     (db) =>
-      db.insert(chatbotKnowledgeBases).values(
-        knowledgeBaseIds.map((knowledgeBaseId) => ({
+      db.insert(chatbotCollections).values(
+        collectionIds.map((collectionId) => ({
           chatbotId,
-          knowledgeBaseId,
+          collectionId,
           workspaceId,
         })),
       ),
@@ -286,8 +286,8 @@ export async function countWorkspaceKnowledgeBases(workspaceId: string, ids: str
     (db) =>
       db
         .select({ total: count() })
-        .from(knowledgeBases)
-        .where(and(eq(knowledgeBases.workspaceId, workspaceId), inArray(knowledgeBases.id, ids))),
+        .from(knowledgeCollections)
+        .where(and(eq(knowledgeCollections.workspaceId, workspaceId), inArray(knowledgeCollections.id, ids))),
     client,
   );
   return rows[0]?.total ?? 0;
@@ -307,17 +307,17 @@ export async function listKnowledgeOptions(workspaceId: string, chatbotId: strin
   const rows = await withDb((db) =>
     db
       .select({
-        id: knowledgeBases.id,
-        name: knowledgeBases.name,
-        status: knowledgeBases.status,
-        sourceCount: sql<number>`(SELECT count(*) FROM ${knowledgeSources} WHERE ${knowledgeSources.knowledgeBaseId} = ${knowledgeBases.id})`.mapWith(
+        id: knowledgeCollections.id,
+        name: knowledgeCollections.name,
+        status: knowledgeCollections.status,
+        sourceCount: sql<number>`(SELECT count(*) FROM ${knowledgeSources} WHERE ${knowledgeSources.collectionId} = ${knowledgeCollections.id})`.mapWith(
           Number,
         ),
-        attached: sql<boolean>`EXISTS (SELECT 1 FROM ${chatbotKnowledgeBases} WHERE ${chatbotKnowledgeBases.knowledgeBaseId} = ${knowledgeBases.id} AND ${chatbotKnowledgeBases.chatbotId} = ${chatbotId})`,
+        attached: sql<boolean>`EXISTS (SELECT 1 FROM ${chatbotCollections} WHERE ${chatbotCollections.collectionId} = ${knowledgeCollections.id} AND ${chatbotCollections.chatbotId} = ${chatbotId})`,
       })
-      .from(knowledgeBases)
-      .where(eq(knowledgeBases.workspaceId, workspaceId))
-      .orderBy(knowledgeBases.name),
+      .from(knowledgeCollections)
+      .where(eq(knowledgeCollections.workspaceId, workspaceId))
+      .orderBy(knowledgeCollections.name),
   );
 
   return rows.map((row) => ({

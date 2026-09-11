@@ -2,7 +2,7 @@
  * Public product demo shown on the marketing site.
  *
  * This chatbot is deliberately NOT a tenant chatbot. It has no workspace, no
- * database row, no knowledge base and no conversation history. Its whole
+ * database row, no knowledge and no conversation history. Its whole
  * configuration is the code in this feature, and its only knowledge is the
  * published documentation. See `src/features/public-chatbot/server/demo-chat.ts`.
  */
@@ -28,7 +28,7 @@ export const DEMO_COMPOSER_PLACEHOLDER = "Ask about chatbots, knowledge, workflo
 export const SUGGESTED_PROMPTS: ReadonlyArray<{ label: string; prompt: string }> = [
   { label: "What can this platform do?", prompt: "What can this platform do?" },
   { label: "Add a chatbot to my site", prompt: "How do I add an AI chatbot to my website?" },
-  { label: "Use my own content", prompt: "Can I ground answers in my own knowledge base?" },
+  { label: "Use my own content", prompt: "Can I ground answers in my own content?" },
   { label: "Build a workflow", prompt: "Can I build custom AI workflows?" },
   { label: "Call the API instead", prompt: "Can I use the API instead of the embed, and how do I authenticate?" },
 ];

@@ -22,7 +22,7 @@ export type BillingInterval = (typeof BILLING_INTERVALS)[number];
  * Capabilities a plan can grant or limit.
  *
  * Every key names something the product ACTUALLY HAS today. Which tier gets how
- * much of it is undecided; that a chatbot, a workflow, a knowledge base, an API
+ * much of it is undecided; that a chatbot, a workflow, a knowledge collection, an API
  * key and a CRM contact exist is not.
  *
  * The four metered keys line up with the `kind` values already written to
@@ -33,7 +33,7 @@ export const ENTITLEMENT_KEYS = [
   "chatbots",
   "agents",
   "workflows",
-  "knowledgeBases",
+  "collections",
   "knowledgeSources",
   "members",
   "apiAccess",

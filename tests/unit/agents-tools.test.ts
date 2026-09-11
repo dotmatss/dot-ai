@@ -10,6 +10,8 @@ import {
   resolveAgentToolCall,
   toolSettingsForForm,
 } from "@/features/agents/tools/registry";
+import { composeToolsColumn } from "@/features/agents/tools/tools-column";
+import { normalizeAgentMcpTools } from "@/features/mcp/agent-attachment";
 import { AGENT_TOOL_IDS } from "@/features/agents/types";
 
 describe("agent tool registry", () => {
@@ -205,5 +207,43 @@ describe("selectMemoryWindow", () => {
 
   it("handles an empty transcript", () => {
     expect(selectMemoryWindow([], { enabled: true, windowMessages: 10, summarize: true })).toEqual([]);
+  });
+});
+
+describe("the tools column holds two halves", () => {
+  // The `agents.tools` jsonb carries built-in settings and MCP attachments.
+  // An update replaces the column outright, so a write that carries only one
+  // half deletes the other. This is the regression guard for that.
+  const builtIn = defaultToolSetting("knowledge_search");
+  const attachment = {
+    source: "mcp" as const,
+    serverSlug: "crm",
+    toolName: "search_contacts",
+    enabled: true,
+    requiresApproval: false,
+  };
+
+  it("keeps both halves readable by their own normaliser", () => {
+    const column = composeToolsColumn([builtIn], [attachment]);
+    expect(normalizeToolSettings(column)).toEqual([builtIn]);
+    expect(normalizeAgentMcpTools(column)).toEqual([attachment]);
+  });
+
+  it("survives a full round trip, which is what a save does", () => {
+    const column = composeToolsColumn([builtIn], [attachment]);
+    const again = composeToolsColumn(normalizeToolSettings(column), normalizeAgentMcpTools(column));
+    expect(normalizeToolSettings(again)).toEqual([builtIn]);
+    expect(normalizeAgentMcpTools(again)).toEqual([attachment]);
+  });
+
+  it("does not let either normaliser see the other's entries", () => {
+    expect(normalizeToolSettings([attachment])).toEqual([]);
+    expect(normalizeAgentMcpTools([builtIn])).toEqual([]);
+  });
+
+  it("writes an empty MCP half without disturbing the built-in half", () => {
+    const column = composeToolsColumn([builtIn], []);
+    expect(normalizeToolSettings(column)).toEqual([builtIn]);
+    expect(normalizeAgentMcpTools(column)).toEqual([]);
   });
 });

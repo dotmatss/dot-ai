@@ -3,12 +3,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { knowledgeApi } from "@/features/knowledge/api";
 import { knowledgeKeys } from "@/features/knowledge/queries";
 import type {
-  CreateKnowledgeBaseInput,
+  CreateCollectionInput,
   CreateSourceInput,
   KnowledgeSearchInput,
-  UpdateKnowledgeBaseInput,
+  MoveSourceInput,
+  UpdateCollectionInput,
 } from "@/features/knowledge/schemas";
-import type { KnowledgeBase, KnowledgeSource } from "@/features/knowledge/types";
+import type { Collection, KnowledgeSource } from "@/features/knowledge/types";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { isApiError } from "@/lib/api/api-error";
 import { toast } from "@/stores/toast-store";
@@ -25,41 +26,48 @@ function reportSourceOutcome(source: KnowledgeSource, successTitle: string) {
   }
   toast.success({
     title: successTitle,
-    description: `${source.chunkCount} passage${source.chunkCount === 1 ? "" : "s"} indexed.`,
+    description: source.collectionName
+      ? `${source.chunkCount} passage${source.chunkCount === 1 ? "" : "s"} indexed in ${source.collectionName}.`
+      : `${source.chunkCount} passage${source.chunkCount === 1 ? "" : "s"} indexed. File it into a collection to let agents use it.`,
   });
 }
 
-export function useCreateKnowledgeBaseMutation() {
+/* -------------------------------------------------------------------------- */
+/* Collections                                                                */
+/* -------------------------------------------------------------------------- */
+
+export function useCreateCollectionMutation() {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
   return useMutation({
-    mutationFn: (input: CreateKnowledgeBaseInput) => knowledgeApi.create(slug, input),
-    onSuccess: (base) => {
-      queryClient.setQueryData(knowledgeKeys.detail(slug, base.id), base);
-      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.lists(slug) });
-      toast.success({ title: "Knowledge base created", description: `Add sources to ${base.name} to make it searchable.` });
+    mutationFn: (input: CreateCollectionInput) => knowledgeApi.createCollection(slug, input),
+    onSuccess: (collection) => {
+      queryClient.setQueryData(knowledgeKeys.collection(slug, collection.id), collection);
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.collections(slug) });
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.overview(slug) });
+      toast.success({ title: "Collection created", description: `Add sources to ${collection.name} to make it searchable.` });
     },
     onError: (error) =>
-      toast.error({ title: "Could not create knowledge base", description: errorMessage(error, "Please try again.") }),
+      toast.error({ title: "Could not create collection", description: errorMessage(error, "Please try again.") }),
   });
 }
 
-export function useUpdateKnowledgeBaseMutation(knowledgeBaseId: string) {
+export function useUpdateCollectionMutation(collectionId: string) {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
-  const detailKey = knowledgeKeys.detail(slug, knowledgeBaseId);
+  const detailKey = knowledgeKeys.collection(slug, collectionId);
 
   return useMutation({
-    mutationFn: (input: UpdateKnowledgeBaseInput) => knowledgeApi.update(slug, knowledgeBaseId, input),
+    mutationFn: (input: UpdateCollectionInput) => knowledgeApi.updateCollection(slug, collectionId, input),
     onMutate: async (input) => {
       // The name is echoed in the header and breadcrumb, so it is worth showing
       // immediately; everything else waits for the server.
       await queryClient.cancelQueries({ queryKey: detailKey });
-      const previous = queryClient.getQueryData<KnowledgeBase>(detailKey);
+      const previous = queryClient.getQueryData<Collection>(detailKey);
       if (previous && input.name) {
-        queryClient.setQueryData<KnowledgeBase>(detailKey, { ...previous, name: input.name });
+        queryClient.setQueryData<Collection>(detailKey, { ...previous, name: input.name });
       }
       return { previous };
     },
@@ -67,71 +75,84 @@ export function useUpdateKnowledgeBaseMutation(knowledgeBaseId: string) {
       if (context?.previous) queryClient.setQueryData(detailKey, context.previous);
       toast.error({ title: "Could not save changes", description: errorMessage(error, "Please try again.") });
     },
-    onSuccess: (base) => {
-      queryClient.setQueryData(detailKey, base);
-      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.lists(slug) });
+    onSuccess: (collection) => {
+      queryClient.setQueryData(detailKey, collection);
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.collectionLists(slug) });
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.overview(slug) });
       toast.success("Changes saved");
     },
   });
 }
 
-export function useDeleteKnowledgeBaseMutation() {
+export function useDeleteCollectionMutation() {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
   return useMutation({
-    mutationFn: (knowledgeBaseId: string) => knowledgeApi.remove(slug, knowledgeBaseId),
-    onSuccess: (_result, knowledgeBaseId) => {
-      queryClient.removeQueries({ queryKey: knowledgeKeys.detail(slug, knowledgeBaseId) });
-      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.lists(slug) });
-      toast.success("Knowledge base deleted");
+    mutationFn: (collectionId: string) => knowledgeApi.removeCollection(slug, collectionId),
+    onSuccess: (_result, collectionId) => {
+      queryClient.removeQueries({ queryKey: knowledgeKeys.collection(slug, collectionId) });
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.collections(slug) });
+      // Its documents are now unorganized, so every source listing is stale.
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.sources(slug) });
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.overview(slug) });
+      toast.success({ title: "Collection deleted", description: "Its sources moved to Unorganized." });
     },
     onError: (error) =>
-      toast.error({ title: "Could not delete knowledge base", description: errorMessage(error, "Please try again.") }),
+      toast.error({ title: "Could not delete collection", description: errorMessage(error, "Please try again.") }),
   });
 }
 
-export function useReprocessKnowledgeBaseMutation(knowledgeBaseId: string) {
+export function useReprocessCollectionMutation(collectionId: string) {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
   return useMutation({
-    mutationFn: () => knowledgeApi.reprocess(slug, knowledgeBaseId),
-    onSuccess: (base) => {
-      queryClient.setQueryData(knowledgeKeys.detail(slug, knowledgeBaseId), base);
-      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.sources(slug, knowledgeBaseId) });
-      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.lists(slug) });
-      if (base.failedSourceCount > 0) {
+    mutationFn: () => knowledgeApi.reprocessCollection(slug, collectionId),
+    onSuccess: (collection) => {
+      queryClient.setQueryData(knowledgeKeys.collection(slug, collectionId), collection);
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.sources(slug) });
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.collectionLists(slug) });
+      if (collection.failedSourceCount > 0) {
         toast.error({
           title: "Reprocessing finished with errors",
-          description: `${base.failedSourceCount} of ${base.sourceCount} sources failed.`,
+          description: `${collection.failedSourceCount} of ${collection.sourceCount} sources failed.`,
         });
         return;
       }
-      toast.success({ title: "Reprocessing finished", description: `${base.chunkCount} passages indexed.` });
+      toast.success({ title: "Reprocessing finished", description: `${collection.chunkCount} passages indexed.` });
     },
     onError: (error) => toast.error({ title: "Could not reprocess", description: errorMessage(error, "Please try again.") }),
   });
 }
 
-/** Invalidates everything a finished pipeline run can change. */
-function useSourceInvalidation(knowledgeBaseId: string) {
+/* -------------------------------------------------------------------------- */
+/* Sources                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Invalidates everything a finished pipeline run can change.
+ *
+ * Every source listing is invalidated, not just the one in view: a document can
+ * be added from the collection page and is simultaneously part of All Knowledge,
+ * and a move changes two listings at once.
+ */
+function useSourceInvalidation() {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
   return () => {
-    void queryClient.invalidateQueries({ queryKey: knowledgeKeys.sources(slug, knowledgeBaseId) });
-    void queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(slug, knowledgeBaseId) });
-    void queryClient.invalidateQueries({ queryKey: knowledgeKeys.lists(slug) });
+    void queryClient.invalidateQueries({ queryKey: knowledgeKeys.sources(slug) });
+    void queryClient.invalidateQueries({ queryKey: knowledgeKeys.collections(slug) });
+    void queryClient.invalidateQueries({ queryKey: knowledgeKeys.overview(slug) });
   };
 }
 
-export function useCreateSourceMutation(knowledgeBaseId: string) {
+export function useCreateSourceMutation(collectionId: string | null) {
   const { membership } = useWorkspace();
-  const invalidate = useSourceInvalidation(knowledgeBaseId);
+  const invalidate = useSourceInvalidation();
   return useMutation({
-    mutationFn: (input: CreateSourceInput) =>
-      knowledgeApi.createSource(membership.workspace.slug, knowledgeBaseId, input),
+    mutationFn: (input: CreateSourceInput) => knowledgeApi.createSource(membership.workspace.slug, collectionId, input),
     onSuccess: (source) => {
       invalidate();
       reportSourceOutcome(source, "Source added");
@@ -140,11 +161,11 @@ export function useCreateSourceMutation(knowledgeBaseId: string) {
   });
 }
 
-export function useUploadSourceMutation(knowledgeBaseId: string) {
+export function useUploadSourceMutation(collectionId: string | null) {
   const { membership } = useWorkspace();
-  const invalidate = useSourceInvalidation(knowledgeBaseId);
+  const invalidate = useSourceInvalidation();
   return useMutation({
-    mutationFn: (file: File) => knowledgeApi.uploadSource(membership.workspace.slug, knowledgeBaseId, file),
+    mutationFn: (file: File) => knowledgeApi.uploadSource(membership.workspace.slug, collectionId, file),
     onSuccess: (source) => {
       invalidate();
       reportSourceOutcome(source, "File uploaded");
@@ -153,12 +174,11 @@ export function useUploadSourceMutation(knowledgeBaseId: string) {
   });
 }
 
-export function useReprocessSourceMutation(knowledgeBaseId: string) {
+export function useReprocessSourceMutation() {
   const { membership } = useWorkspace();
-  const invalidate = useSourceInvalidation(knowledgeBaseId);
+  const invalidate = useSourceInvalidation();
   return useMutation({
-    mutationFn: (sourceId: string) =>
-      knowledgeApi.reprocessSource(membership.workspace.slug, knowledgeBaseId, sourceId),
+    mutationFn: (sourceId: string) => knowledgeApi.reprocessSource(membership.workspace.slug, sourceId),
     onSuccess: (source) => {
       invalidate();
       reportSourceOutcome(source, "Source reprocessed");
@@ -167,11 +187,28 @@ export function useReprocessSourceMutation(knowledgeBaseId: string) {
   });
 }
 
-export function useDeleteSourceMutation(knowledgeBaseId: string) {
+/** Filing a document into a collection, or back into Unorganized with a null id. */
+export function useMoveSourceMutation() {
   const { membership } = useWorkspace();
-  const invalidate = useSourceInvalidation(knowledgeBaseId);
+  const invalidate = useSourceInvalidation();
   return useMutation({
-    mutationFn: (sourceId: string) => knowledgeApi.removeSource(membership.workspace.slug, knowledgeBaseId, sourceId),
+    mutationFn: ({ sourceId, ...input }: MoveSourceInput & { sourceId: string }) =>
+      knowledgeApi.moveSource(membership.workspace.slug, sourceId, input),
+    onSuccess: (source) => {
+      invalidate();
+      toast.success(
+        source.collectionName ? `Filed into ${source.collectionName}` : "Moved to Unorganized",
+      );
+    },
+    onError: (error) => toast.error({ title: "Could not move source", description: errorMessage(error, "Please try again.") }),
+  });
+}
+
+export function useDeleteSourceMutation() {
+  const { membership } = useWorkspace();
+  const invalidate = useSourceInvalidation();
+  return useMutation({
+    mutationFn: (sourceId: string) => knowledgeApi.removeSource(membership.workspace.slug, sourceId),
     onSuccess: () => {
       invalidate();
       toast.success("Source removed");
@@ -180,10 +217,9 @@ export function useDeleteSourceMutation(knowledgeBaseId: string) {
   });
 }
 
-export function useKnowledgeSearchMutation(knowledgeBaseId: string) {
+export function useKnowledgeSearchMutation(collectionId: string) {
   const { membership } = useWorkspace();
   return useMutation({
-    mutationFn: (input: KnowledgeSearchInput) =>
-      knowledgeApi.search(membership.workspace.slug, knowledgeBaseId, input),
+    mutationFn: (input: KnowledgeSearchInput) => knowledgeApi.search(membership.workspace.slug, collectionId, input),
   });
 }

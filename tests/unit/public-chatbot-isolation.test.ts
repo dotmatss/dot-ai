@@ -93,7 +93,7 @@ const FORBIDDEN_MODULE_PATTERNS: Array<{ pattern: RegExp; why: string }> = [
   { pattern: /^src\/features\/workspaces\//, why: "tenant membership" },
   { pattern: /^src\/features\/crm\//, why: "customer records" },
   { pattern: /^src\/features\/conversations\//, why: "customer conversations" },
-  { pattern: /^src\/features\/knowledge\//, why: "customer knowledge bases" },
+  { pattern: /^src\/features\/knowledge\//, why: "customer knowledge collections" },
   { pattern: /^src\/features\/embed\/server\//, why: "embed token signing" },
   { pattern: /api-key/, why: "API keys" },
   { pattern: /secret-box/, why: "credential encryption" },

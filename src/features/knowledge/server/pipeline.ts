@@ -1,25 +1,26 @@
 import "server-only";
 
 import { chunkText, estimateTokens, normalizeSourceText } from "@/features/knowledge/chunking";
+import { DEFAULT_EMBEDDING_CONFIG } from "@/features/knowledge/constants";
 import type { KnowledgeEmbeddingConfig } from "@/features/knowledge/types";
 import { EMBEDDING_BATCH_SIZE, getEmbeddingProvider } from "@/features/knowledge/server/embeddings";
 import {
   countSourceStatuses,
-  findKnowledgeBaseById,
+  findCollectionById,
   findSourceById,
   getSourceContent,
   listSourceIds,
   markSourcesPending,
   replaceSourceChunks,
   setChunkEmbeddings,
-  setKnowledgeBaseStatus,
+  setCollectionStatus,
   setSourceContent,
   setSourceCounts,
   setSourceStatus,
   type ChunkEmbedding,
 } from "@/features/knowledge/server/knowledge-repository";
 import { fetchUrlDocument } from "@/features/knowledge/server/url-ingest";
-import type { KnowledgeBase, KnowledgeBaseStatus, KnowledgeSource, KnowledgeSourceStatus } from "@/features/knowledge/types";
+import type { Collection, CollectionStatus, KnowledgeSource, KnowledgeSourceStatus } from "@/features/knowledge/types";
 import { ApiError, isApiError } from "@/lib/api/api-error";
 import type { EmbeddingProvider } from "@/server/ai/gateway";
 import { withWorkspace } from "@/server/db/client";
@@ -34,6 +35,11 @@ import { recordUsage } from "@/server/usage/record-usage";
  * so the UI polls the source row to show where the work actually is. Only the
  * chunk replacement runs in a transaction, because chunks are derived data that
  * must never be observed half-written.
+ *
+ * A document is processed the same way whether or not it is in a collection.
+ * Unorganized documents are fully ingested, chunked and embedded; filing one
+ * later is a metadata move, not a re-index. That is what makes "upload now,
+ * organise later" cheap rather than a promise to redo the expensive part.
  *
  * Execution is inline in the request that triggers it. See the module note at
  * the bottom for what moving to a queue changes.
@@ -50,7 +56,7 @@ function toUserMessage(error: unknown): string {
   return "Processing failed for an unknown reason. Try again, and contact support if it keeps happening.";
 }
 
-function resolveStatus(counts: { total: number; failed: number; inFlight: number }): KnowledgeBaseStatus {
+function resolveStatus(counts: { total: number; failed: number; inFlight: number }): CollectionStatus {
   if (counts.total === 0) return "empty";
   if (counts.inFlight > 0) return "processing";
   if (counts.failed > 0) return "error";
@@ -58,13 +64,21 @@ function resolveStatus(counts: { total: number; failed: number; inFlight: number
 }
 
 /**
- * Recomputes the parent knowledge base status from its sources. Derived rather
- * than tracked so it is correct no matter which source finished last.
+ * Recomputes a collection's status from its sources. Derived rather than
+ * tracked so it is correct no matter which source finished last.
+ *
+ * Accepts null because a source may be unorganized, and "recompute the status
+ * of no collection" is a no-op rather than a caller error — it saves every call
+ * site the same null check.
  */
-export async function recomputeKnowledgeBaseStatus(workspaceId: string, knowledgeBaseId: string): Promise<KnowledgeBaseStatus> {
-  const counts = await countSourceStatuses(workspaceId, knowledgeBaseId);
+export async function recomputeCollectionStatus(
+  workspaceId: string,
+  collectionId: string | null,
+): Promise<CollectionStatus | null> {
+  if (!collectionId) return null;
+  const counts = await countSourceStatuses(workspaceId, collectionId);
   const status = resolveStatus(counts);
-  await setKnowledgeBaseStatus(workspaceId, knowledgeBaseId, status);
+  await setCollectionStatus(workspaceId, collectionId, status);
   return status;
 }
 
@@ -111,7 +125,7 @@ async function ingest(ctx: StageContext, source: KnowledgeSource): Promise<strin
 /** Stages 4 and 5: chunk, then embed each chunk. */
 async function chunkAndEmbed(
   ctx: StageContext,
-  knowledgeBaseId: string,
+  collectionId: string | null,
   text: string,
   config: KnowledgeEmbeddingConfig,
   provider: EmbeddingProvider,
@@ -126,7 +140,7 @@ async function chunkAndEmbed(
   }
 
   const chunkIds = await withWorkspace(ctx.workspaceId, (client) =>
-    replaceSourceChunks(ctx.workspaceId, knowledgeBaseId, ctx.sourceId, chunks, client),
+    replaceSourceChunks(ctx.workspaceId, collectionId, ctx.sourceId, chunks, client),
   );
 
   await advance(ctx, "embedding");
@@ -161,10 +175,11 @@ export async function processSource(
   const source = await findSourceById(ctx.workspaceId, ctx.sourceId);
   if (!source) throw ApiError.notFound("Source not found");
 
-  const base = await findKnowledgeBaseById(ctx.workspaceId, source.knowledgeBaseId);
-  if (!base) throw ApiError.notFound("Knowledge base not found");
-
   const provider = options.embeddings ?? getEmbeddingProvider();
+  // The config in force for this run. It is written onto the source when
+  // indexing succeeds, so the row always records how its current vectors were
+  // actually produced rather than how they would be produced today.
+  const config = DEFAULT_EMBEDDING_CONFIG;
   const stage: StageContext = { workspaceId: ctx.workspaceId, sourceId: ctx.sourceId };
 
   try {
@@ -174,13 +189,13 @@ export async function processSource(
     const text = normalizeSourceText(raw);
     if (!text) throw ApiError.badRequest("This source contains no readable text.");
 
-    const { chunkCount, embeddedTokens } = await chunkAndEmbed(stage, source.knowledgeBaseId, text, base.embeddingConfig, provider);
+    const { chunkCount, embeddedTokens } = await chunkAndEmbed(stage, source.collectionId, text, config, provider);
 
     await advance(stage, "indexing");
     // The source's token count describes its own content; the embedding usage
     // event below counts chunk tokens, which include the overlap that was
     // actually sent to the provider.
-    await setSourceCounts(ctx.workspaceId, ctx.sourceId, { chunkCount, tokenCount: estimateTokens(text) });
+    await setSourceCounts(ctx.workspaceId, ctx.sourceId, { chunkCount, tokenCount: estimateTokens(text) }, config);
     if (embeddedTokens > 0) {
       await recordUsage({
         workspaceId: ctx.workspaceId,
@@ -199,7 +214,7 @@ export async function processSource(
     console.error("[knowledge] source processing failed", { sourceId: ctx.sourceId, error });
   }
 
-  await recomputeKnowledgeBaseStatus(ctx.workspaceId, source.knowledgeBaseId);
+  await recomputeCollectionStatus(ctx.workspaceId, source.collectionId);
 
   const updated = await findSourceById(ctx.workspaceId, ctx.sourceId);
   if (!updated) throw ApiError.notFound("Source not found");
@@ -207,27 +222,27 @@ export async function processSource(
 }
 
 /**
- * Reprocesses every source in a knowledge base. All sources are marked pending
- * up front so the UI reflects the queue even if the request is cut short, then
+ * Reprocesses every source in a collection. All sources are marked pending up
+ * front so the UI reflects the queue even if the request is cut short, then
  * they run one at a time to keep provider load predictable.
  */
-export async function processKnowledgeBase(
-  ctx: { workspaceId: string; knowledgeBaseId: string },
+export async function processCollection(
+  ctx: { workspaceId: string; collectionId: string },
   options: ProcessSourceOptions = {},
-): Promise<KnowledgeBase> {
-  const sourceIds = await listSourceIds(ctx.workspaceId, ctx.knowledgeBaseId);
+): Promise<Collection> {
+  const sourceIds = await listSourceIds(ctx.workspaceId, ctx.collectionId);
   if (sourceIds.length > 0) {
-    await markSourcesPending(ctx.workspaceId, ctx.knowledgeBaseId);
-    await setKnowledgeBaseStatus(ctx.workspaceId, ctx.knowledgeBaseId, "processing");
+    await markSourcesPending(ctx.workspaceId, ctx.collectionId);
+    await setCollectionStatus(ctx.workspaceId, ctx.collectionId, "processing");
     for (const sourceId of sourceIds) {
       await processSource({ workspaceId: ctx.workspaceId, sourceId }, options);
     }
   }
-  await recomputeKnowledgeBaseStatus(ctx.workspaceId, ctx.knowledgeBaseId);
+  await recomputeCollectionStatus(ctx.workspaceId, ctx.collectionId);
 
-  const base = await findKnowledgeBaseById(ctx.workspaceId, ctx.knowledgeBaseId);
-  if (!base) throw ApiError.notFound("Knowledge base not found");
-  return base;
+  const collection = await findCollectionById(ctx.workspaceId, ctx.collectionId);
+  if (!collection) throw ApiError.notFound("Collection not found");
+  return collection;
 }
 
 /*
@@ -235,7 +250,7 @@ export async function processKnowledgeBase(
  * --------------------
  * Processing runs inline in the request today, which is why the routes are
  * write-scoped and why per-stage statuses are committed as they happen. The
- * seam for moving to a queue is exactly `processSource` / `processKnowledgeBase`:
+ * seam for moving to a queue is exactly `processSource` / `processCollection`:
  * a worker would consume source ids, and the route handlers would leave the
  * source in `pending` and return immediately. The UI already polls while any
  * source is in flight, so it needs no change.

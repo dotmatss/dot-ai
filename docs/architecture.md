@@ -53,7 +53,7 @@ Three things are reachable without a session, and each has its own trust model.
 
 The marketing site carries a chat launcher that loads its own code on first click, so a visitor who never opens it downloads a button and nothing else.
 
-It is not a tenant chatbot, and that is the whole security argument. It has no workspace, no database row, no knowledge base and no stored conversation; its request contract has no tenant identifier for an attacker to aim at, and its module graph never reaches `src/server/db`, a repository, a session or a credential. `tests/unit/public-chatbot-isolation.test.ts` walks that graph and fails if it ever does.
+It is not a tenant chatbot, and that is the whole security argument. It has no workspace, no database row, no knowledge and no stored conversation; its request contract has no tenant identifier for an attacker to aim at, and its module graph never reaches `src/server/db`, a repository, a session or a credential. `tests/unit/public-chatbot-isolation.test.ts` walks that graph and fails if it ever does.
 
 It answers from the published documentation. The same ranking the docs search box uses picks the relevant pages, they are passed to the gateway as grounding sources, and the citations are streamed to the browser before the first token. Because the documentation is already tested to contain no credentials and no unsupported claims, a demo grounded in it cannot promise a capability the product does not have.
 
@@ -66,16 +66,29 @@ The widget and the public API are peers, not a primary and a fallback. Both end 
 
 Both paths are rate limited on independent ceilings (workspace, then chatbot or key, then client) so one noisy caller cannot exhaust another's budget. See `src/server/http/rate-limit.ts`.
 
+## Two integration directions
+
+These are opposite and are kept visibly separate, because confusing them is how a platform ends up trusting the wrong side.
+
+```text
+Customer's application ──▶ our API          /api/v1/public/chat        they authenticate to us
+our Agent ──▶ MCP client ──▶ customer's MCP server                     we authenticate to them
+```
+
+The inbound direction is authenticated by a workspace API key and bounded by rate limits. The outbound direction is the MCP feature: Streamable HTTP over HTTPS only, credentials sealed with a workspace-bound key, every request through the shared egress guard, which pins the connection to the address it validated, and every tool approved by a person and pinned to the definition they approved. MCP tool calls **do** execute, and they are the only tool path that does: every call is re-checked at the point of use, recorded in `mcp_tool_calls` (refusals included), and anything classified destructive waits in an approvals queue for a person. The six built-in agent tools remain simulated. See `docs/mcp-evaluation.md`.
+
 ## Domain model
 
 ```text
 users ─┬─ sessions
        ├─ user_identities (external providers)
        └─ organization_members (role) ── organizations ── workspaces
-                                                            ├── chatbots ── chatbot_knowledge_bases
-                                                            ├── agents ── agent_knowledge_bases
+                                                            ├── chatbots ── chatbot_collections
+                                                            ├── agents ── agent_collections
                                                             ├── workflows ── workflow_runs
-                                                            ├── knowledge_bases ── knowledge_sources (── knowledge_chunks)
+                                                            ├── knowledge_collections
+                                                            ├── knowledge_sources (collection_id, NULL = Unorganized)
+                                                            │      └── knowledge_chunks
                                                             ├── conversations ── messages
                                                             ├── contacts ── contact_notes / contact_activities
                                                             ├── integrations (non-secret config + secret_ref) / api_keys
@@ -86,6 +99,27 @@ users ─┬─ sessions
 Every workspace-scoped table has `workspace_id`, explicit filters in SQL and an RLS policy (ADR 0002).
 
 The same tables are described in TypeScript under `src/server/db/schema/` for Drizzle. That description is generated from nothing and owns nothing: migrations remain the source of truth, and a test compares the two against the live database so they cannot drift. Repositories are being moved onto the query builder one feature at a time; `chatbot-repository.ts` is the reference, and the other nine still use `query`/`queryOne` unchanged. See `docs/orm-evaluation.md`.
+
+## Workflow visualization
+
+The workflow builder has one definition and two views of it. `WorkflowBuilder` owns the draft (`useBuilderState`, plain React state); the Build tab edits it and the Preview tab draws it. Both read the same `WorkflowDefinition`, so there is nothing to keep in sync.
+
+```text
+                     WorkflowDefinition  (workflows.definition jsonb)
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ↓                     ↓                     ↓
+  validateDefinition     buildPreviewGraph      runWorkflow
+   (domain/definition)   (domain/preview)      (domain/execution)
+                              ↓
+                       PreviewGraph  ──→  WorkflowPreviewCanvas / …Node / …Summary
+```
+
+`buildPreviewGraph` is the whole seam. It is pure and DOM-free — layered ranking, orthogonal edge paths, an accessible walkthrough — so it is unit tested like `chart-geometry.ts`, and the renderer receives coordinates and strings rather than Zod schemas or node registry entries. Everything a node *means* comes from `NODE_TYPES`, so a new node type (an MCP tool, an agent, a knowledge lookup) is previewable the moment it is registered; the preview has no node list of its own. A definition the validator rejects still draws: duplicate ids, edges pointing at deleted steps and cycles are dropped or marked rather than thrown.
+
+The preview is read-only by construction, not by a flag — it is handed a definition and no mutator, so an edit is unrepresentable. Navigation (pan, zoom, fit) is local `useState` inside the canvas.
+
+Run state is modelled but never produced here: `buildPreviewGraph(definition, { states })` accepts a status per node and every node defaults to `idle`, which renders no status at all. That is what keeps a static diagram from implying a run happened, and it is the seam a future execution view uses — the same graph plus a run's steps — instead of a second renderer. Steps the engine only records (`describeNodeEffect`) are labelled "Simulated" for the same reason.
 
 ## State management rules
 

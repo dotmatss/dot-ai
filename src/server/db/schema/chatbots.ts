@@ -2,7 +2,7 @@ import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, unique, uu
 
 import { agentStatus, chatbotStatus } from "@/server/db/schema/columns";
 import { users } from "@/server/db/schema/identity";
-import { knowledgeBases } from "@/server/db/schema/knowledge";
+import { knowledgeCollections } from "@/server/db/schema/knowledge";
 import { workspaces } from "@/server/db/schema/tenancy";
 
 export const chatbots = pgTable(
@@ -34,20 +34,21 @@ export const chatbots = pgTable(
   ],
 );
 
-export const chatbotKnowledgeBases = pgTable(
-  "chatbot_knowledge_bases",
+/** Which collections a chatbot may retrieve from. */
+export const chatbotCollections = pgTable(
+  "chatbot_collections",
   {
     chatbotId: uuid("chatbot_id")
       .notNull()
       .references(() => chatbots.id, { onDelete: "cascade" }),
-    knowledgeBaseId: uuid("knowledge_base_id")
+    collectionId: uuid("collection_id")
       .notNull()
-      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+      .references(() => knowledgeCollections.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
   },
-  (table) => [primaryKey({ columns: [table.chatbotId, table.knowledgeBaseId] })],
+  (table) => [primaryKey({ columns: [table.chatbotId, table.collectionId] })],
 );
 
 export const agents = pgTable(
@@ -73,18 +74,19 @@ export const agents = pgTable(
   (table) => [index("agents_workspace_id_idx").on(table.workspaceId, table.updatedAt.desc())],
 );
 
-export const agentKnowledgeBases = pgTable(
-  "agent_knowledge_bases",
+/** Which collections an agent may retrieve from. */
+export const agentCollections = pgTable(
+  "agent_collections",
   {
     agentId: uuid("agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
-    knowledgeBaseId: uuid("knowledge_base_id")
+    collectionId: uuid("collection_id")
       .notNull()
-      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+      .references(() => knowledgeCollections.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
   },
-  (table) => [primaryKey({ columns: [table.agentId, table.knowledgeBaseId] })],
+  (table) => [primaryKey({ columns: [table.agentId, table.collectionId] })],
 );

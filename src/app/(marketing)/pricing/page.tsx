@@ -84,7 +84,7 @@ export default function PricingPage() {
           <div className="py-5">
             <dt className="text-sm font-semibold text-foreground">Which capabilities are real today?</dt>
             <dd className="mt-1.5 text-sm leading-6 text-foreground-muted">
-              All of the ones named on this page. Chatbots, agents, workflows, knowledge bases, the conversation inbox,
+              All of the ones named on this page. Chatbots, agents, workflows, knowledge collections, the conversation inbox,
               the CRM, integrations and the API are built and documented. What is undecided is how much of each a given
               plan includes.
             </dd>

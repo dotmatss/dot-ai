@@ -39,7 +39,7 @@ const GROUPS = [
       { href: "/docs/chatbots", label: "Chatbots" },
       { href: "/docs/agents", label: "Agents" },
       { href: "/docs/workflows", label: "Workflows" },
-      { href: "/docs/knowledge-base", label: "Knowledge base" },
+      { href: "/docs/knowledge", label: "Knowledge" },
     ],
   },
 ] as const;

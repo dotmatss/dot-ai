@@ -213,11 +213,16 @@ function FileSourceForm({ mutation, onDone }: { mutation: UploadMutation; onDone
   );
 }
 
+/**
+ * `collectionId` is null when adding from All Knowledge or Unorganized: the
+ * document is indexed straight into Unorganized rather than being filed
+ * somewhere the user never chose.
+ */
 export function AddSourceButton({
-  knowledgeBaseId,
+  collectionId,
   variant,
 }: {
-  knowledgeBaseId: string;
+  collectionId: string | null;
   variant?: "primary" | "secondary";
 }) {
   const { membership } = useWorkspace();
@@ -225,8 +230,8 @@ export function AddSourceButton({
   const [mode, setMode] = useState<Mode>("text");
   // Owned here so the dialog footer can reflect the pending state of whichever
   // panel is submitting.
-  const createMutation = useCreateSourceMutation(knowledgeBaseId);
-  const uploadMutation = useUploadSourceMutation(knowledgeBaseId);
+  const createMutation = useCreateSourceMutation(collectionId);
+  const uploadMutation = useUploadSourceMutation(collectionId);
   const busy = createMutation.isPending || uploadMutation.isPending;
 
   if (!canEdit(membership.role)) return null;
@@ -242,7 +247,11 @@ export function AddSourceButton({
         open={open}
         onClose={close}
         title="Add a source"
-        description="Content is ingested, chunked, embedded and indexed before it can be retrieved."
+        description={
+          collectionId
+            ? "Content is ingested, chunked, embedded and indexed before it can be retrieved."
+            : "Content is ingested, chunked, embedded and indexed. It lands in Unorganized, so file it into a collection to let agents retrieve from it."
+        }
         size="lg"
         dismissible={!busy}
         footer={

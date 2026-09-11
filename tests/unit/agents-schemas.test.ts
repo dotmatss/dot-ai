@@ -55,9 +55,9 @@ describe("updateAgentSchema", () => {
     expect(agentOutputSchemaField.safeParse(null).success).toBe(true);
   });
 
-  it("rejects knowledge base ids that are not uuids", () => {
-    expect(updateAgentSchema.safeParse({ knowledgeBaseIds: ["not-a-uuid"] }).success).toBe(false);
-    expect(updateAgentSchema.safeParse({ knowledgeBaseIds: ["7f9c0d3e-59a4-4c2e-9c1a-6b0f1d2e3a4b"] }).success).toBe(true);
+  it("rejects collection ids that are not uuids", () => {
+    expect(updateAgentSchema.safeParse({ collectionIds: ["not-a-uuid"] }).success).toBe(false);
+    expect(updateAgentSchema.safeParse({ collectionIds: ["7f9c0d3e-59a4-4c2e-9c1a-6b0f1d2e3a4b"] }).success).toBe(true);
   });
 });
 

@@ -39,6 +39,27 @@ if (typeof Element !== "undefined" && typeof Element.prototype.scrollIntoView !=
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
 
+/**
+ * jsdom dispatches pointer events but implements no pointer capture. Anything
+ * that drags — the workflow preview pans this way — captures the pointer so a
+ * gesture survives leaving the element, and would throw here without these.
+ * The shims track the captured id so `hasPointerCapture` stays truthful.
+ */
+if (typeof Element !== "undefined" && typeof Element.prototype.setPointerCapture !== "function") {
+  const captured = new WeakMap<Element, Set<number>>();
+  Element.prototype.setPointerCapture = function setPointerCapture(this: Element, pointerId: number) {
+    const ids = captured.get(this) ?? new Set<number>();
+    ids.add(pointerId);
+    captured.set(this, ids);
+  };
+  Element.prototype.releasePointerCapture = function releasePointerCapture(this: Element, pointerId: number) {
+    captured.get(this)?.delete(pointerId);
+  };
+  Element.prototype.hasPointerCapture = function hasPointerCapture(this: Element, pointerId: number) {
+    return captured.get(this)?.has(pointerId) ?? false;
+  };
+}
+
 afterEach(() => {
   cleanup();
 });

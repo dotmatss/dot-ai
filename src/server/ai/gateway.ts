@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ChatMessage, ChatStreamEvent, RetrievedSource } from "@/types/ai";
+import type { AiToolDefinition, ChatMessage, ChatStreamEvent, RetrievedSource } from "@/types/ai";
 
 export interface ChatCompletionRequest {
   model?: string;
@@ -9,6 +9,14 @@ export interface ChatCompletionRequest {
   maxTokens?: number;
   /** Retrieved knowledge to ground the answer and cite. */
   sources?: RetrievedSource[];
+  /**
+   * Tools the model may call on this request.
+   *
+   * Required for a tool call to happen at all: a provider emits one only for a
+   * tool declared here, so describing tools in the system prompt alone makes
+   * them unreachable. Omitted means no tool calling.
+   */
+  tools?: AiToolDefinition[];
   /** Opaque metadata forwarded to the gateway for tracing (never secrets). */
   metadata?: Record<string, string>;
   signal?: AbortSignal;

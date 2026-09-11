@@ -113,3 +113,15 @@ export async function findMemberRole(organizationId: string, userId: string): Pr
   );
   return row?.role ?? null;
 }
+
+/**
+ * The slug for a workspace id.
+ *
+ * Needed by flows that are handed a workspace id by something other than a URL
+ * — the MCP OAuth callback arrives from an authorization server and learns its
+ * workspace from the state row, then has to send the browser to a path.
+ */
+export async function findWorkspaceSlugById(workspaceId: string): Promise<string | null> {
+  const row = await queryOne<{ slug: string }>("SELECT slug FROM workspaces WHERE id = $1", [workspaceId]);
+  return row?.slug ?? null;
+}

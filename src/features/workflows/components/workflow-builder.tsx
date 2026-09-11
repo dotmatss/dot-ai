@@ -9,11 +9,13 @@ import { AppBadge } from "@/components/ui/app-badge";
 import { AppButton } from "@/components/ui/app-button";
 import { AppCard } from "@/components/ui/app-card";
 import { AppSkeleton } from "@/components/ui/app-skeleton";
+import { AppTab, AppTabList, AppTabPanel, AppTabs } from "@/components/ui/app-tabs";
 import { AppCaption, AppText } from "@/components/ui/app-typography";
 import { AddStepDialog } from "@/features/workflows/components/add-step-dialog";
 import { BuilderStepCard } from "@/features/workflows/components/builder-step-card";
 import { DefinitionIssues } from "@/features/workflows/components/definition-issues";
 import { NodeConfigPanel } from "@/features/workflows/components/node-config-panel";
+import { WorkflowPreview } from "@/features/workflows/components/workflow-preview";
 import { validateDefinition, type EdgeCondition, type WorkflowDefinition } from "@/features/workflows/domain/definition";
 import { type InsertPoint } from "@/features/workflows/domain/edits";
 import { defaultOutgoingEdges, displayOrder, incomingEdges } from "@/features/workflows/domain/graph";
@@ -91,7 +93,7 @@ function BuilderView({ workflow }: { workflow: Workflow }) {
     : null;
 
   return (
-    <div className="flex flex-col gap-4">
+    <AppTabs defaultValue="build" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <AppText size="sm" tone="muted">
@@ -104,121 +106,142 @@ function BuilderView({ workflow }: { workflow: Workflow }) {
             </AppBadge>
           ) : null}
         </div>
-        {editable ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <AppButton
-              variant="secondary"
-              leadingIcon={<Plus aria-hidden />}
-              onClick={() => setPicker({ open: true, after: toolbarInsertPoint(builder.definition) })}
-            >
-              Add step
-            </AppButton>
-            <AppButton
-              variant="ghost"
-              leadingIcon={<RotateCcw aria-hidden />}
-              disabled={!builder.dirty || update.isPending}
-              onClick={() => builder.reset(workflow.definition)}
-            >
-              Discard
-            </AppButton>
-            <AppButton
-              leadingIcon={<Save aria-hidden />}
-              disabled={!builder.dirty}
-              loading={update.isPending}
-              onClick={save}
-            >
-              Save
-            </AppButton>
-          </div>
-        ) : (
-          <AppCaption>Read-only: you need the member role to edit this workflow.</AppCaption>
-        )}
+        {/* The preview reads the draft being edited, so it is a view of this
+            page's state rather than a separate route. */}
+        <AppTabList label="Workflow view" variant="pill">
+          <AppTab value="build" variant="pill">
+            Build
+          </AppTab>
+          <AppTab value="preview" variant="pill">
+            Preview
+          </AppTab>
+        </AppTabList>
       </div>
 
-      <DefinitionIssues issues={issues} onSelect={builder.select} quiet={!editable} />
-
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        {builder.definition.nodes.length === 0 ? (
-          <AppCard>
-            <AppEmptyState
-              icon={<WorkflowIcon aria-hidden />}
-              title="Start with a trigger"
-              description="Every workflow begins with one trigger: a manual start, an incoming webhook or a new conversation."
-              action={
-                editable ? (
-                  <AppButton leadingIcon={<Plus aria-hidden />} onClick={() => setPicker({ open: true })}>
-                    Add a trigger
-                  </AppButton>
-                ) : null
-              }
-            />
-          </AppCard>
-        ) : (
-          <ol className="flex flex-col">
-            {order.map((nodeId, index) => {
-              const node = builder.definition.nodes.find((candidate) => candidate.id === nodeId);
-              if (!node) return null;
-              const incoming = incomingEdges(builder.definition, node.id).find(
-                (edge) => edge.condition === "true" || edge.condition === "false",
-              );
-              const source = incoming ? builder.definition.nodes.find((candidate) => candidate.id === incoming.from) : undefined;
-              const incomingLabel =
-                incoming && source
-                  ? `${NODE_TYPES[source.type].outputs.find((port) => port.id === incoming.condition)?.label ?? incoming.condition} · ${source.label}`
-                  : null;
-
-              return (
-                <BuilderStepCard
-                  key={node.id}
-                  index={index + 1}
-                  node={node}
-                  definition={builder.definition}
-                  selected={builder.selectedNodeId === node.id}
-                  editable={editable}
-                  errorCount={errorsByNode.get(node.id) ?? 0}
-                  incomingLabel={incomingLabel}
-                  onSelect={() => builder.select(node.id)}
-                  onRemove={() => builder.removeStep(node.id)}
-                  onMove={(direction) => builder.moveStep(node.id, direction)}
-                  onAddAfter={(outcome?: EdgeCondition) => setPicker({ open: true, after: { nodeId: node.id, outcome } })}
-                  onWire={(outcome, toId) => builder.wireOutcome(node.id, outcome, toId)}
-                />
-              );
-            })}
-          </ol>
-        )}
-
-        <div className="lg:sticky lg:top-6">
-          {builder.selectedNode ? (
-            <NodeConfigPanel
-              key={builder.selectedNode.id}
-              node={builder.selectedNode}
-              editable={editable}
-              onApply={(patch) => {
-                if (!builder.selectedNode) return;
-                builder.updateStep(builder.selectedNode.id, patch);
-              }}
-            />
+      {/* Kept mounted: switching to Preview must not discard a configuration
+          form the author has half filled in. */}
+      <AppTabPanel value="build" keepMounted className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {editable ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <AppButton
+                variant="secondary"
+                leadingIcon={<Plus aria-hidden />}
+                onClick={() => setPicker({ open: true, after: toolbarInsertPoint(builder.definition) })}
+              >
+                Add step
+              </AppButton>
+              <AppButton
+                variant="ghost"
+                leadingIcon={<RotateCcw aria-hidden />}
+                disabled={!builder.dirty || update.isPending}
+                onClick={() => builder.reset(workflow.definition)}
+              >
+                Discard
+              </AppButton>
+              <AppButton
+                leadingIcon={<Save aria-hidden />}
+                disabled={!builder.dirty}
+                loading={update.isPending}
+                onClick={save}
+              >
+                Save
+              </AppButton>
+            </div>
           ) : (
-            <AppCard variant="muted">
-              <AppEmptyState
-                size="sm"
-                title="No step selected"
-                description="Choose a step to configure its prompt, condition or request. Changes apply to this draft until you save."
-              />
-            </AppCard>
+            <AppCaption>Read-only: you need the member role to edit this workflow.</AppCaption>
           )}
         </div>
-      </div>
 
-      <AddStepDialog
-        open={picker.open}
-        onClose={() => setPicker({ open: false })}
-        allowTriggers={!hasTrigger}
-        anchorLabel={anchorLabel}
-        onPick={(type: WorkflowNodeType) => builder.addStep(type, picker.after)}
-      />
-    </div>
+        <DefinitionIssues issues={issues} onSelect={builder.select} quiet={!editable} />
+
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          {builder.definition.nodes.length === 0 ? (
+            <AppCard>
+              <AppEmptyState
+                icon={<WorkflowIcon aria-hidden />}
+                title="Start with a trigger"
+                description="Every workflow begins with one trigger: a manual start, an incoming webhook or a new conversation."
+                action={
+                  editable ? (
+                    <AppButton leadingIcon={<Plus aria-hidden />} onClick={() => setPicker({ open: true })}>
+                      Add a trigger
+                    </AppButton>
+                  ) : null
+                }
+              />
+            </AppCard>
+          ) : (
+            <ol className="flex flex-col">
+              {order.map((nodeId, index) => {
+                const node = builder.definition.nodes.find((candidate) => candidate.id === nodeId);
+                if (!node) return null;
+                const incoming = incomingEdges(builder.definition, node.id).find(
+                  (edge) => edge.condition === "true" || edge.condition === "false",
+                );
+                const source = incoming ? builder.definition.nodes.find((candidate) => candidate.id === incoming.from) : undefined;
+                const incomingLabel =
+                  incoming && source
+                    ? `${NODE_TYPES[source.type].outputs.find((port) => port.id === incoming.condition)?.label ?? incoming.condition} · ${source.label}`
+                    : null;
+
+                return (
+                  <BuilderStepCard
+                    key={node.id}
+                    index={index + 1}
+                    node={node}
+                    definition={builder.definition}
+                    selected={builder.selectedNodeId === node.id}
+                    editable={editable}
+                    errorCount={errorsByNode.get(node.id) ?? 0}
+                    incomingLabel={incomingLabel}
+                    onSelect={() => builder.select(node.id)}
+                    onRemove={() => builder.removeStep(node.id)}
+                    onMove={(direction) => builder.moveStep(node.id, direction)}
+                    onAddAfter={(outcome?: EdgeCondition) => setPicker({ open: true, after: { nodeId: node.id, outcome } })}
+                    onWire={(outcome, toId) => builder.wireOutcome(node.id, outcome, toId)}
+                  />
+                );
+              })}
+            </ol>
+          )}
+
+          <div className="lg:sticky lg:top-6">
+            {builder.selectedNode ? (
+              <NodeConfigPanel
+                key={builder.selectedNode.id}
+                node={builder.selectedNode}
+                editable={editable}
+                onApply={(patch) => {
+                  if (!builder.selectedNode) return;
+                  builder.updateStep(builder.selectedNode.id, patch);
+                }}
+              />
+            ) : (
+              <AppCard variant="muted">
+                <AppEmptyState
+                  size="sm"
+                  title="No step selected"
+                  description="Choose a step to configure its prompt, condition or request. Changes apply to this draft until you save."
+                />
+              </AppCard>
+            )}
+          </div>
+        </div>
+
+        <AddStepDialog
+          open={picker.open}
+          onClose={() => setPicker({ open: false })}
+          allowTriggers={!hasTrigger}
+          anchorLabel={anchorLabel}
+          onPick={(type: WorkflowNodeType) => builder.addStep(type, picker.after)}
+        />
+      </AppTabPanel>
+
+      <AppTabPanel value="preview">
+        <WorkflowPreview definition={builder.definition} unsaved={builder.dirty} />
+      </AppTabPanel>
+    </AppTabs>
   );
 }
 

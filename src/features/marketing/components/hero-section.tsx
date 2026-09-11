@@ -58,7 +58,7 @@ export function HeroSection() {
                   </span>
                   <div>
                     <p className="text-sm font-semibold leading-4">Support Assistant</p>
-                    <p className="text-caption text-foreground-muted">Active · 2 knowledge bases</p>
+                    <p className="text-caption text-foreground-muted">Active · 2 collectiones</p>
                   </div>
                 </div>
                 <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-success-border bg-success-bg px-2.5 text-caption font-medium text-success">

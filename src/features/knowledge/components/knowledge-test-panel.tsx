@@ -17,7 +17,7 @@ import { AppOverline } from "@/components/ui/app-typography";
 import { KnowledgeLifecycle } from "@/features/knowledge/components/knowledge-lifecycle";
 import { DEFAULT_RETRIEVAL_LIMIT } from "@/features/knowledge/constants";
 import { useKnowledgeSearchMutation } from "@/features/knowledge/mutations";
-import { useKnowledgeBaseQuery } from "@/features/knowledge/queries";
+import { useCollectionQuery } from "@/features/knowledge/queries";
 import { knowledgeSearchFormSchema, type KnowledgeSearchFormValues } from "@/features/knowledge/schemas";
 import type { RetrievedSource } from "@/types/ai";
 
@@ -81,7 +81,7 @@ function ResultsRegion({ mutation }: { mutation: ReturnType<typeof useKnowledgeS
         size="sm"
         icon={<SearchX aria-hidden />}
         title="No passages matched"
-        description="Nothing in this knowledge base matches those words. Try the wording your customers would use, or add a source that covers the topic."
+        description="Nothing in this collection matches those words. Try the wording your customers would use, or add a source that covers the topic."
       />
     );
   }
@@ -98,9 +98,9 @@ function ResultsRegion({ mutation }: { mutation: ReturnType<typeof useKnowledgeS
   );
 }
 
-export function KnowledgeTestPanel({ knowledgeBaseId }: { knowledgeBaseId: string }) {
-  const baseQuery = useKnowledgeBaseQuery(knowledgeBaseId);
-  const mutation = useKnowledgeSearchMutation(knowledgeBaseId);
+export function KnowledgeTestPanel({ collectionId }: { collectionId: string }) {
+  const collectionQuery = useCollectionQuery(collectionId);
+  const mutation = useKnowledgeSearchMutation(collectionId);
   const form = useForm<KnowledgeSearchFormValues>({
     resolver: zodResolver(knowledgeSearchFormSchema),
     defaultValues: { query: "" },
@@ -110,7 +110,7 @@ export function KnowledgeTestPanel({ knowledgeBaseId }: { knowledgeBaseId: strin
     mutation.mutate({ query: values.query, limit: DEFAULT_RETRIEVAL_LIMIT });
   });
 
-  const isEmptyBase = baseQuery.data?.chunkCount === 0;
+  const isEmptyCollection = collectionQuery.data?.chunkCount === 0;
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -136,7 +136,7 @@ export function KnowledgeTestPanel({ knowledgeBaseId }: { knowledgeBaseId: strin
           </AppButton>
         </form>
 
-        {isEmptyBase ? (
+        {isEmptyCollection ? (
           <AppAlert tone="warning" title="Nothing is indexed yet">
             Add a source and let it finish processing; until then retrieval has nothing to rank.
           </AppAlert>

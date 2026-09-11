@@ -32,7 +32,7 @@ function KnowledgeSelector({ chatbotId, options }: { chatbotId: string; options:
   const attachedIds = new Set(options.filter((o) => o.attached).map((o) => o.id));
   const [selected, setSelected] = useState<Set<string>>(() => new Set(attachedIds));
   const dirty = selected.size !== attachedIds.size || [...selected].some((id) => !attachedIds.has(id));
-  const knowledgeHref = `/w/${membership.workspace.slug}/knowledge` as Route;
+  const knowledgeHref = `/w/${membership.workspace.slug}/knowledge/collections` as Route;
 
   function toggle(id: string) {
     setSelected((current) => {
@@ -71,7 +71,7 @@ function KnowledgeSelector({ chatbotId, options }: { chatbotId: string; options:
             <AppButton variant="secondary" onClick={() => setSelected(new Set(attachedIds))} disabled={!dirty || update.isPending}>
               Discard
             </AppButton>
-            <AppButton loading={update.isPending} disabled={!dirty} onClick={() => update.mutate({ knowledgeBaseIds: [...selected] })}>
+            <AppButton loading={update.isPending} disabled={!dirty} onClick={() => update.mutate({ collectionIds: [...selected] })}>
               Save knowledge
             </AppButton>
           </div>
@@ -79,11 +79,11 @@ function KnowledgeSelector({ chatbotId, options }: { chatbotId: string; options:
       </div>
       <div className="flex flex-col gap-4">
         <AppAlert tone="info" title="How retrieval works">
-          On each message the most relevant chunks from attached knowledge bases are retrieved and passed to the model, which cites them as
+          On each message the most relevant chunks from attached collections are retrieved and passed to the model, which cites them as
           numbered sources in its reply.
         </AppAlert>
         <AppButtonLink href={knowledgeHref} variant="secondary" leadingIcon={<BookOpen aria-hidden />}>
-          Manage knowledge bases
+          Manage collections
         </AppButtonLink>
       </div>
     </div>
@@ -102,10 +102,14 @@ export function ChatbotKnowledgePanel({ chatbotId }: { chatbotId: string }) {
       <AppCard>
         <AppEmptyState
           icon={<Database aria-hidden />}
-          title="No knowledge bases in this workspace"
-          description="Create a knowledge base, add documents or URLs, and attach it here so the chatbot can answer from your content with citations."
+          title="No collections in this workspace"
+          description="Create a collection, add documents or URLs, and attach it here so the chatbot can answer from your content with citations."
           action={
-            <AppButtonLink href={`/w/${membership.workspace.slug}/knowledge` as Route} variant="primary" size="sm">
+            <AppButtonLink
+              href={`/w/${membership.workspace.slug}/knowledge/collections` as Route}
+              variant="primary"
+              size="sm"
+            >
               Go to Knowledge
             </AppButtonLink>
           }

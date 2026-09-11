@@ -15,6 +15,9 @@ export const POST = workspaceRoute<Params>(
       agent,
       input,
       signal: request.signal,
+      // Explicit rather than read back out of `metadata`: this identity is
+      // recorded against any MCP tool call the turn makes.
+      userId: user.id,
       metadata: { userId: user.id },
     });
   },

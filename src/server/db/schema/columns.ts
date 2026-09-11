@@ -24,7 +24,7 @@ export const citext = customType<{ data: string; driverData: string }>({
 
 export const memberRole = pgEnum("member_role", ["owner", "admin", "member", "viewer"]);
 
-export const knowledgeBaseStatus = pgEnum("knowledge_base_status", ["empty", "processing", "ready", "error"]);
+export const collectionStatus = pgEnum("collection_status", ["empty", "processing", "ready", "error"]);
 export const knowledgeSourceType = pgEnum("knowledge_source_type", ["url", "file", "text"]);
 export const knowledgeSourceStatus = pgEnum("knowledge_source_status", [
   "pending",

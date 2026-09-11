@@ -92,4 +92,49 @@ describe("AppTabs", () => {
     await userEvent.click(screen.getByRole("tab", { name: "B" }));
     expect(seen).toEqual(["b"]);
   });
+
+  it("unmounts the panel that is not selected", async () => {
+    render(
+      <AppTabs defaultValue="a">
+        <AppTabList label="Demo">
+          <AppTab value="a">A</AppTab>
+          <AppTab value="b">B</AppTab>
+        </AppTabList>
+        <AppTabPanel value="a">Panel A</AppTabPanel>
+        <AppTabPanel value="b">Panel B</AppTabPanel>
+      </AppTabs>,
+    );
+
+    expect(screen.queryByText("Panel B")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "B" }));
+    expect(screen.queryByText("Panel A")).not.toBeInTheDocument();
+  });
+
+  it("keeps a `keepMounted` panel alive, hidden, so its state survives a switch", async () => {
+    // The workflow builder relies on this: opening Preview must not throw away
+    // a configuration form the author has half filled in.
+    render(
+      <AppTabs defaultValue="build">
+        <AppTabList label="View">
+          <AppTab value="build">Build</AppTab>
+          <AppTab value="preview">Preview</AppTab>
+        </AppTabList>
+        <AppTabPanel value="build" keepMounted>
+          <input aria-label="Step name" defaultValue="" />
+        </AppTabPanel>
+        <AppTabPanel value="preview">Diagram</AppTabPanel>
+      </AppTabs>,
+    );
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Step name" }), "Qualify the lead");
+    await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
+
+    // Hidden from the accessibility tree while the other tab is shown...
+    expect(screen.queryByRole("textbox", { name: "Step name" })).not.toBeInTheDocument();
+    expect(screen.getByText("Diagram")).toBeInTheDocument();
+
+    // ...but still holding what was typed when it comes back.
+    await userEvent.click(screen.getByRole("tab", { name: "Build" }));
+    expect(screen.getByRole("textbox", { name: "Step name" })).toHaveValue("Qualify the lead");
+  });
 });

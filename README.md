@@ -1,6 +1,6 @@
 # Dot — AI chatbot & workflow platform
 
-Multi-tenant SaaS for creating, deploying and managing AI chatbots, agents, workflows, RAG knowledge bases, conversations and a CRM. Built with Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, TanStack Query, Zustand, Zod, React Hook Form and PostgreSQL.
+Multi-tenant SaaS for creating, deploying and managing AI chatbots, agents, workflows, RAG knowledge collections, conversations and a CRM. Built with Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, TanStack Query, Zustand, Zod, React Hook Form and PostgreSQL.
 
 ## Quick start
 
@@ -19,7 +19,7 @@ Open http://localhost:3000, create an account, and you land in your first worksp
 | --- | --- | --- |
 | Design system | `src/app/globals.css`, `src/components/ui` | Monochrome tokens (ink scale, semantic surfaces, status tones), `App*` primitives |
 | App shell | `src/components/layout` | Sidebar, top bar, page header/container, providers |
-| Features | `src/features/*` | Feature-oriented modules: auth, workspaces, dashboard, chatbots, agents, workflows, knowledge, conversations, crm, integrations, analytics, settings, embed, marketing, docs, public-chatbot |
+| Features | `src/features/*` | Feature-oriented modules: auth, workspaces, dashboard, chatbots, agents, workflows, knowledge, conversations, crm, integrations, mcp, analytics, settings, pricing, embed, marketing, docs, legal, public-chatbot |
 | Server boundary | `src/server/*` | PostgreSQL access, sessions/DAL, route-handler helpers, AI gateway, activity/usage logging |
 | Routes | `src/app` | `/(auth)`, `/onboarding`, `/w/[workspaceSlug]/...`, `/embed/[embedKey]`, `/api/v1/...`, `/api/public/...` |
 | Public site | `src/app/(marketing)`, `src/features/marketing`, `src/features/docs`, `src/features/legal`, `src/features/public-chatbot` | Static landing page, developer documentation, legal pages, and a tenant-less AI demo that loads on first click |
@@ -56,3 +56,5 @@ Never hard-code a key or put one in a `NEXT_PUBLIC_*` variable. Full reference a
 - [docs/theming.md](docs/theming.md) — light, dark and system appearance, and why the preference is not a cookie
 - [docs/legal-and-privacy.md](docs/legal-and-privacy.md) — where policy content lives, what the app stores in a browser, and the questions still open for legal review
 - [docs/orm-evaluation.md](docs/orm-evaluation.md) — why Drizzle ORM was chosen, and what adopting it did and did not change
+- [docs/mcp-evaluation.md](docs/mcp-evaluation.md) — Model Context Protocol: the client architecture, what phase 1 implemented, and what is deliberately left to phase 2
+- [docs/mcp-phase2-gate.md](docs/mcp-phase2-gate.md) — **proposed, not implemented.** The DNS-rebinding window that must close before any MCP tool executes, and the six decisions it needs

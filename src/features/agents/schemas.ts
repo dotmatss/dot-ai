@@ -61,6 +61,41 @@ export const agentToolSettingsSchema = z
 export type AgentToolSettingsInput = z.input<typeof agentToolSettingsSchema>;
 
 /**
+ * One MCP attachment in the same `tools` jsonb array.
+ *
+ * The tool is identified by our slug for the server plus the server's own tool
+ * name, never by a database id, so a client cannot address another workspace's
+ * row by guessing one. Whether the workspace actually granted the tool is not
+ * asserted here: that is re-checked on every call, and a save must not fail
+ * because an unrelated grant was revoked in the meantime.
+ */
+export const agentMcpToolSchema = z.object({
+  source: z.literal("mcp"),
+  serverSlug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { error: "That is not a server reference" }),
+  toolName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_.:-]+$/, { error: "That is not a tool name" }),
+  enabled: z.boolean(),
+  requiresApproval: z.boolean(),
+});
+
+export const agentMcpToolsSchema = z
+  .array(agentMcpToolSchema)
+  .max(200, { error: "Too many MCP tools attached" })
+  .refine(
+    (entries) => new Set(entries.map((entry) => `${entry.serverSlug}/${entry.toolName}`)).size === entries.length,
+    { error: "Each MCP tool can only be attached once" },
+  );
+
+/**
  * Structured output is edited as JSON text but stored as jsonb, so the field
  * accepts either the raw editor text or an already-parsed object and always
  * yields an object (or null when cleared).
@@ -101,10 +136,11 @@ export const updateAgentSchema = z
     status: agentStatusSchema,
     modelConfig: agentModelConfigSchema,
     tools: agentToolSettingsSchema,
+    mcpTools: agentMcpToolsSchema,
     memoryConfig: agentMemoryConfigSchema,
     outputSchema: agentOutputSchemaField,
     requiresApproval: z.boolean(),
-    knowledgeBaseIds: z.array(z.uuid()).max(20, { error: "Up to 20 knowledge bases" }),
+    collectionIds: z.array(z.uuid()).max(20, { error: "Up to 20 collections" }),
   })
   .partial()
   .refine((value) => Object.keys(value).length > 0, { error: "Nothing to update" });

@@ -15,6 +15,8 @@ import {
   type AgentPatch,
 } from "@/features/agents/server/agent-repository";
 import type { Agent, AgentKnowledgeOption, AgentListFilters, AgentOverview, AgentSummary } from "@/features/agents/types";
+import { composeToolsColumn } from "@/features/agents/tools/tools-column";
+import { assertAttachableServers } from "@/features/mcp/server/agent-mcp";
 import { ApiError } from "@/lib/api/api-error";
 import { recordActivity } from "@/server/activity/activity-log";
 import { withWorkspace } from "@/server/db/client";
@@ -89,13 +91,25 @@ export async function updateAgent(ctx: ActorContext, agentId: string, input: Upd
       }
     }
 
-    if (input.knowledgeBaseIds) {
-      const unique = [...new Set(input.knowledgeBaseIds)];
+    if (input.collectionIds) {
+      const unique = [...new Set(input.collectionIds)];
       const owned = await countWorkspaceKnowledgeBases(ctx.workspaceId, unique, client);
       if (owned !== unique.length) {
-        throw ApiError.validation({ knowledgeBaseIds: ["One or more knowledge bases do not belong to this workspace"] });
+        throw ApiError.validation({ collectionIds: ["One or more collections do not belong to this workspace"] });
       }
       await replaceAgentKnowledgeBases(ctx.workspaceId, agentId, unique, client);
+    }
+
+    // The `tools` column holds two halves: built-in settings and MCP
+    // attachments. It is replaced outright, so writing one half alone would
+    // erase the other. Compose both, from the patch where given and from the
+    // stored agent otherwise, and only when at least one half is changing.
+    let toolsPatch: AgentPatch["tools"];
+    if (input.tools !== undefined || input.mcpTools !== undefined) {
+      if (input.mcpTools !== undefined) {
+        await assertAttachableServers(ctx.workspaceId, input.mcpTools);
+      }
+      toolsPatch = composeToolsColumn(input.tools ?? existing.tools, input.mcpTools ?? existing.mcpTools);
     }
 
     const patch: AgentPatch = {
@@ -104,7 +118,7 @@ export async function updateAgent(ctx: ActorContext, agentId: string, input: Upd
       instructions: input.instructions,
       status: input.status,
       modelConfig: input.modelConfig ? { ...DEFAULT_MODEL_CONFIG, ...input.modelConfig } : undefined,
-      tools: input.tools,
+      tools: toolsPatch,
       memoryConfig: input.memoryConfig ? { ...DEFAULT_MEMORY_CONFIG, ...input.memoryConfig } : undefined,
       outputSchema: input.outputSchema,
       requiresApproval: input.requiresApproval,

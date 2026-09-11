@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ChatStreamEvent } from "@/types/ai";
+import type { ChatMessage, ChatStreamEvent } from "@/types/ai";
 
 import type { AiGateway, ChatCompletionRequest } from "./gateway";
 
@@ -23,6 +23,44 @@ interface StreamChunk {
   error?: { message?: string; code?: string };
 }
 
+/** One message in the provider's wire shape. */
+interface WireMessage {
+  role: string;
+  content: string;
+  tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+}
+
+/**
+ * Maps our message onto the provider's.
+ *
+ * The two tool-related shapes are not decoration. A provider rejects a `tool`
+ * message that does not carry the `tool_call_id` of a call it can see, and it
+ * cannot see the call unless the preceding assistant message repeats it. A
+ * multi-step tool exchange therefore has to replay both halves.
+ */
+function toWireMessage(message: ChatMessage): WireMessage {
+  if (message.role === "tool") {
+    return { role: "tool", content: message.content, ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}) };
+  }
+  if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
+    return {
+      role: "assistant",
+      content: message.content,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: {
+          name: call.name,
+          // Always a string on the wire, even when we parsed it on the way in.
+          arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {}),
+        },
+      })),
+    };
+  }
+  return { role: message.role, content: message.content };
+}
+
 /**
  * Streams chat completions from any OpenAI-compatible endpoint. Intended to be
  * pointed at Cloudflare AI Gateway, which fronts the actual model provider and
@@ -43,7 +81,7 @@ export class OpenAiCompatibleGateway implements AiGateway {
         .join("\n\n");
       messages.splice(messages.findIndex((m) => m.role !== "system"), 0, {
         role: "system",
-        content: `Use the following knowledge base excerpts when relevant and cite them as [n].\n\n${context}`,
+        content: `Use the following knowledge excerpts when relevant and cite them as [n].\n\n${context}`,
       });
       yield { type: "sources", sources: request.sources };
     }
@@ -59,11 +97,22 @@ export class OpenAiCompatibleGateway implements AiGateway {
       },
       body: JSON.stringify({
         model,
-        messages,
+        messages: messages.map(toWireMessage),
         temperature: request.temperature,
         max_tokens: request.maxTokens,
         stream: true,
         stream_options: { include_usage: true },
+        // Only sent when there is something to call. `auto` rather than
+        // `required`: the model must stay free to answer without a tool.
+        ...(request.tools && request.tools.length > 0
+          ? {
+              tools: request.tools.map((tool) => ({
+                type: "function",
+                function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+              })),
+              tool_choice: "auto",
+            }
+          : {}),
       }),
     });
 

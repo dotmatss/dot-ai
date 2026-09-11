@@ -10,7 +10,10 @@ const ICONS: Record<string, ReactNode> = {
   chatbot: <Bot aria-hidden />,
   agent: <Cpu aria-hidden />,
   workflow: <Workflow aria-hidden />,
+  knowledge_collection: <BookOpen aria-hidden />,
+  // Written before migration 0016 renamed the concept; those rows are history.
   knowledge_base: <BookOpen aria-hidden />,
+  knowledge_source: <BookOpen aria-hidden />,
   contact: <Users aria-hidden />,
   integration: <Plug aria-hidden />,
 };
@@ -27,7 +30,7 @@ export async function DashboardActivity({ workspaceId }: { workspaceId: string }
       </AppCardHeader>
       <AppCardContent className="pt-4">
         {entries.length === 0 ? (
-          <AppEmptyState size="sm" icon={<Activity aria-hidden />} title="No activity yet" description="Create a chatbot or knowledge base to see activity here." />
+          <AppEmptyState size="sm" icon={<Activity aria-hidden />} title="No activity yet" description="Create a chatbot or a knowledge collection to see activity here." />
         ) : (
           <ol className="flex flex-col">
             {entries.map((entry) => (

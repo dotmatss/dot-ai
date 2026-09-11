@@ -1,3 +1,5 @@
+import type { AgentMcpToolAttachment } from "@/features/mcp/agent-attachment";
+
 export const AGENT_STATUSES = ["draft", "active", "paused", "archived"] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
@@ -42,7 +44,7 @@ export interface AgentSummary {
   description: string | null;
   status: AgentStatus;
   conversationCount: number;
-  knowledgeBaseCount: number;
+  collectionCount: number;
   enabledToolCount: number;
   requiresApproval: boolean;
   createdAt: string;
@@ -54,9 +56,15 @@ export interface Agent extends AgentSummary {
   instructions: string;
   modelConfig: AgentModelConfig;
   tools: AgentToolSetting[];
+  /**
+   * The MCP half of the same `tools` jsonb column. Two normalisers read one
+   * array: this one and `normalizeToolSettings`, each ignoring the other's
+   * entries. Both halves must be written back together - see `updateAgent`.
+   */
+  mcpTools: AgentMcpToolAttachment[];
   memoryConfig: AgentMemoryConfig;
   outputSchema: AgentOutputSchema | null;
-  knowledgeBaseIds: string[];
+  collectionIds: string[];
 }
 
 export interface AgentListFilters {

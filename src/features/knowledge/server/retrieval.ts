@@ -13,9 +13,19 @@ import type { RetrievedSource } from "@/types/ai";
  * The `to_tsvector('english', content)` expression matches the GIN index from
  * migration 0008 exactly, so this is an index scan.
  *
- * Knowledge bases whose sources have not been chunked yet fall back to the
- * source text, so a chatbot attached to a freshly imported knowledge base still
- * gets grounding instead of silence.
+ * SCOPE IS ALWAYS A SET OF COLLECTIONS
+ * ------------------------------------
+ * There is no "search everything" mode, and that is the security property the
+ * whole Collections model exists to provide: an agent answers from the
+ * collections it was given and from nothing else. In particular, Unorganized
+ * documents (`collection_id IS NULL`) are never retrievable. They are indexed
+ * and searchable in the UI, but until someone files them they are outside every
+ * agent's reach — which is what makes "this bot can only answer from HR
+ * Policies" a statement about the data rather than about the prompt.
+ *
+ * A NULL can only enter `collectionIds` by mistake, and SQL's `NULL = ANY(...)`
+ * would quietly evaluate to NULL rather than raising, so nulls are stripped
+ * before the query is built rather than trusted to fail safely.
  *
  * The vector store plugs in behind this same signature: callers (the chatbot
  * chat pipeline, agents, the knowledge test panel) never depend on how
@@ -34,11 +44,11 @@ interface RetrievalRow {
 
 export async function retrieveKnowledge(
   workspaceId: string,
-  knowledgeBaseIds: string[],
+  collectionIds: ReadonlyArray<string | null | undefined>,
   queryText: string,
   limit = 4,
 ): Promise<RetrievedSource[]> {
-  const ids = [...new Set(knowledgeBaseIds)];
+  const ids = [...new Set(collectionIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
   if (ids.length === 0 || !queryText.trim()) return [];
 
   const rows = await query<RetrievalRow>(
@@ -58,9 +68,15 @@ export async function retrieveKnowledge(
        JOIN knowledge_sources ks ON ks.id = kc.source_id AND ks.workspace_id = kc.workspace_id
        CROSS JOIN q
        WHERE kc.workspace_id = $1
-         AND kc.knowledge_base_id = ANY($2::uuid[])
+         AND kc.collection_id IS NOT NULL
+         AND kc.collection_id = ANY($2::uuid[])
          AND to_tsvector('english', kc.content) @@ q.tsq
      ),
+     -- A source that has been ingested but not yet chunked still answers, so a
+     -- collection attached mid-import gives grounding instead of silence. The
+     -- test is per source rather than per collection: a document whose chunking
+     -- failed should fall back to its own text even when its neighbours indexed
+     -- cleanly.
      source_hits AS (
        SELECT ks.id, ks.name AS title, ks.uri,
               ts_headline('english', ks.content, q.tsq, '${HEADLINE_OPTIONS}') AS snippet,
@@ -68,11 +84,12 @@ export async function retrieveKnowledge(
        FROM knowledge_sources ks
        CROSS JOIN q
        WHERE ks.workspace_id = $1
-         AND ks.knowledge_base_id = ANY($2::uuid[])
+         AND ks.collection_id IS NOT NULL
+         AND ks.collection_id = ANY($2::uuid[])
          AND ks.content IS NOT NULL
          AND NOT EXISTS (
            SELECT 1 FROM knowledge_chunks kc
-           WHERE kc.workspace_id = ks.workspace_id AND kc.knowledge_base_id = ks.knowledge_base_id
+           WHERE kc.workspace_id = ks.workspace_id AND kc.source_id = ks.id
          )
          AND to_tsvector('english', ks.content) @@ q.tsq
      )
