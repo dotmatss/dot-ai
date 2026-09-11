@@ -1,0 +1,154 @@
+import type { LegalDocument } from "@/features/legal/types";
+
+/**
+ * Terms of service.
+ *
+ * Written against what the product actually does today. In particular it does
+ * not promise uptime, support response times, or a billing arrangement,
+ * because none of those exist in the code. Adding them later is a product
+ * decision, not a drafting one.
+ */
+export const TERMS_OF_SERVICE: LegalDocument = {
+  slug: "terms",
+  title: "Terms of Service",
+  description: "The agreement between you and the operator of this service.",
+  effectiveDate: "[[EFFECTIVE_DATE]]",
+  lastUpdated: "11 September 2026",
+  reviewAreas: ["jurisdiction", "billing"],
+  blocks: [
+    {
+      type: "callout",
+      tone: "warning",
+      title: "Draft, pending legal review",
+      body: "These terms describe how the software actually behaves. They have not been reviewed by a qualified lawyer, and values that must be supplied by the operator are marked in place. Do not rely on this document as a binding agreement until it has been reviewed.",
+    },
+
+    { type: "heading", id: "agreement", text: "This agreement" },
+    {
+      type: "paragraph",
+      text: "These terms are between you and [[COMPANY_LEGAL_NAME]], registered at [[COMPANY_REGISTERED_ADDRESS]], company number [[COMPANY_REGISTRATION_NUMBER]]. By creating an account or using the service, you accept them. If you are accepting on behalf of an organisation, you confirm you are authorised to do so.",
+    },
+
+    { type: "heading", id: "the-service", text: "What the service does" },
+    {
+      type: "paragraph",
+      text: "The service lets you build AI chatbots and agents, ground them in knowledge you provide, deploy them to a website or call them from your own systems through an API, and manage the resulting conversations and contacts. Features change as the product develops.",
+    },
+
+    { type: "heading", id: "accounts", text: "Accounts" },
+    {
+      type: "list",
+      items: [
+        "You must provide accurate account information and keep your credentials secure.",
+        "You are responsible for everything done under your account and by the members you invite into your workspace.",
+        "Roles control what a member can do. Granting someone an administrator role gives them the ability to change settings and remove other members.",
+        "Tell us promptly at [[CONTACT_EMAIL]] if you believe an account has been compromised.",
+      ],
+    },
+
+    { type: "heading", id: "your-content", text: "Your content" },
+    {
+      type: "paragraph",
+      text: "You keep ownership of everything you put into the service: your instructions, your uploaded and ingested knowledge, your conversations and your contact records. You grant us only the permission needed to operate the service for you, which includes storing that content, processing it to generate answers, and sending the relevant part of it to a model provider for a single request.",
+    },
+    {
+      type: "paragraph",
+      text: "You are responsible for having the right to use the content you add, including any personal data in it, and for telling the people whose data you upload what you are doing with it.",
+    },
+
+    { type: "heading", id: "api-and-embedding", text: "API keys and embedding" },
+    {
+      type: "list",
+      items: [
+        "API keys authenticate as your workspace. Keep them on a server. Never put a key in a browser, a mobile app, or a public repository.",
+        "A key is shown once when it is created; we store only a hash of it and cannot recover it for you. If a key is exposed, revoke it.",
+        "Embedding a chatbot on a website makes it reachable from the domains you allow. You are responsible for which domains you allow and for what your chatbot says to your visitors.",
+        "Rate limits apply to protect the service. They are documented in the [API rate limits reference](/docs/api/rate-limits).",
+      ],
+    },
+
+    { type: "heading", id: "acceptable-use", text: "Acceptable use" },
+    { type: "paragraph", text: "You agree not to use the service to:" },
+    {
+      type: "list",
+      items: [
+        "break the law, or infringe anyone's rights, including intellectual property and privacy rights",
+        "upload content you have no right to use, or personal data you have no basis to process",
+        "generate content that harasses, deceives or endangers people, or that impersonates someone else",
+        "probe, scan or overload the service, circumvent rate limits, or attempt to reach another customer's data",
+        "resell the service, or use it to build a competing product",
+      ],
+    },
+    {
+      type: "paragraph",
+      text: "We may suspend an account that puts the service or other customers at risk. Where it is reasonable to do so, we will tell you first.",
+    },
+
+    { type: "heading", id: "ai-output", text: "AI output" },
+    {
+      type: "callout",
+      tone: "warning",
+      title: "AI answers can be wrong",
+      body: "Answers are generated by a language model. They can be inaccurate, incomplete or confidently wrong, even when grounded in your own knowledge base. You are responsible for reviewing output before relying on it, and for what your chatbots say to your visitors. Do not use the service as a substitute for professional advice, and do not put it in the path of a decision that needs to be right without a human checking it.",
+    },
+    {
+      type: "paragraph",
+      text: "Tool calls made by an agent are resolved and shown to you rather than executed automatically, so no model output reaches a privileged action without a person deciding.",
+    },
+
+    { type: "heading", id: "availability", text: "Availability and changes" },
+    {
+      type: "paragraph",
+      text: "The service is provided as it is. We do not currently offer a service level agreement, a guaranteed uptime figure, or a committed support response time. We may change, add or remove features. Where a change would break something you depend on, we will make a reasonable effort to give notice.",
+    },
+
+    { type: "heading", id: "fees", text: "Fees" },
+    {
+      type: "paragraph",
+      text: "Billing is not enabled. Nothing is charged today, and usage is metered but not invoiced. If paid plans are introduced, the terms covering price, billing period, taxes, renewal and refunds will be published before they take effect and will not apply retroactively.",
+    },
+
+    { type: "heading", id: "termination", text: "Ending the agreement" },
+    {
+      type: "list",
+      items: [
+        "You can stop using the service at any time.",
+        "We may end this agreement if you materially breach these terms and do not fix it after being asked.",
+        "When an account ends, the data in it is handled as described in the [Privacy Policy](/privacy).",
+      ],
+    },
+    {
+      type: "callout",
+      tone: "info",
+      title: "Requires confirmation",
+      body: "Self-service account closure and data export are not implemented. Until they are, closure and export are handled manually on request.",
+    },
+
+    { type: "heading", id: "liability", text: "Liability" },
+    {
+      type: "paragraph",
+      text: "Nothing in these terms limits liability that cannot lawfully be limited. Subject to that, the service is provided without warranties of any kind, and we are not liable for indirect or consequential loss, lost profits, or lost or corrupted data arising from your use of the service.",
+    },
+    {
+      type: "callout",
+      tone: "warning",
+      title: "Must be drafted by a lawyer",
+      body: "Liability caps, warranty disclaimers, indemnities and consumer-law carve-outs vary by jurisdiction and cannot be written generically. This section is a placeholder for a reviewed clause, not a finished one.",
+    },
+
+    { type: "heading", id: "governing-law", text: "Governing law" },
+    {
+      type: "paragraph",
+      text: "These terms are governed by [[GOVERNING_LAW]], and disputes are subject to the courts of [[COURTS_JURISDICTION]]. Mandatory rights under the law of your country of residence are not affected.",
+    },
+
+    { type: "heading", id: "changes-to-terms", text: "Changes to these terms" },
+    {
+      type: "paragraph",
+      text: "We will update the date at the top of this page when these terms change, and will give reasonable notice of material changes. Continuing to use the service after a change means you accept the updated terms.",
+    },
+
+    { type: "heading", id: "contact", text: "Contact" },
+    { type: "paragraph", text: "Questions about these terms can be sent to [[CONTACT_EMAIL]]." },
+  ],
+};

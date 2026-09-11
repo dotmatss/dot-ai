@@ -1,0 +1,165 @@
+import "server-only";
+
+import { randomBytes } from "node:crypto";
+
+import { DEFAULT_APPEARANCE, DEFAULT_MODEL_CONFIG } from "@/features/chatbots/constants";
+import type { CreateChatbotInput, updateChatbotSchema } from "@/features/chatbots/schemas";
+import {
+  countWorkspaceKnowledgeBases,
+  deleteChatbotRow,
+  findChatbotById,
+  getChatbotOverview,
+  insertChatbot,
+  listChatbots,
+  listKnowledgeOptions,
+  replaceChatbotKnowledgeBases,
+  slugExists,
+  updateChatbotRow,
+  type ChatbotPatch,
+} from "@/features/chatbots/server/chatbot-repository";
+import type { Chatbot, ChatbotKnowledgeOption, ChatbotListFilters, ChatbotOverview, ChatbotSummary } from "@/features/chatbots/types";
+import { ApiError } from "@/lib/api/api-error";
+import { slugify, withSuffix } from "@/lib/slug";
+import { recordActivity } from "@/server/activity/activity-log";
+import { withWorkspace } from "@/server/db/client";
+import type { Paginated } from "@/types/pagination";
+import type { z } from "zod";
+
+export interface ActorContext {
+  workspaceId: string;
+  userId: string;
+}
+
+type UpdateInput = z.output<typeof updateChatbotSchema>;
+
+export function getChatbots(workspaceId: string, filters: ChatbotListFilters): Promise<Paginated<ChatbotSummary>> {
+  return listChatbots(workspaceId, filters);
+}
+
+export async function getChatbot(workspaceId: string, chatbotId: string): Promise<Chatbot> {
+  const chatbot = await findChatbotById(workspaceId, chatbotId);
+  if (!chatbot) throw ApiError.notFound("Chatbot not found");
+  return chatbot;
+}
+
+export function getChatbotKnowledgeOptions(workspaceId: string, chatbotId: string): Promise<ChatbotKnowledgeOption[]> {
+  return listKnowledgeOptions(workspaceId, chatbotId);
+}
+
+export async function getChatbotOverviewStats(workspaceId: string, chatbotId: string): Promise<ChatbotOverview> {
+  await getChatbot(workspaceId, chatbotId);
+  return getChatbotOverview(workspaceId, chatbotId);
+}
+
+function generateEmbedKey(): string {
+  return `cb_${randomBytes(12).toString("base64url")}`;
+}
+
+export async function createChatbot(ctx: ActorContext, input: CreateChatbotInput): Promise<Chatbot> {
+  return withWorkspace(ctx.workspaceId, async (client) => {
+    const root = slugify(input.name);
+    let slug = root;
+    for (let attempt = 0; await slugExists(ctx.workspaceId, slug, client); attempt++) {
+      if (attempt > 50) throw ApiError.conflict("Could not allocate a unique slug");
+      slug = withSuffix(root, attempt + 1);
+    }
+    const chatbot = await insertChatbot(
+      {
+        workspaceId: ctx.workspaceId,
+        createdBy: ctx.userId,
+        name: input.name,
+        slug,
+        description: input.description?.trim() ? input.description.trim() : null,
+        embedKey: generateEmbedKey(),
+        modelConfig: DEFAULT_MODEL_CONFIG,
+        appearance: DEFAULT_APPEARANCE,
+      },
+      client,
+    );
+    await recordActivity(
+      {
+        workspaceId: ctx.workspaceId,
+        actorId: ctx.userId,
+        entityType: "chatbot",
+        entityId: chatbot.id,
+        action: "created",
+        summary: `Created chatbot “${chatbot.name}”`,
+      },
+      client,
+    );
+    return chatbot;
+  });
+}
+
+export async function updateChatbot(ctx: ActorContext, chatbotId: string, input: UpdateInput): Promise<Chatbot> {
+  return withWorkspace(ctx.workspaceId, async (client) => {
+    const existing = await findChatbotById(ctx.workspaceId, chatbotId, client);
+    if (!existing) throw ApiError.notFound("Chatbot not found");
+
+    if (input.knowledgeBaseIds) {
+      const unique = [...new Set(input.knowledgeBaseIds)];
+      const owned = await countWorkspaceKnowledgeBases(ctx.workspaceId, unique, client);
+      if (owned !== unique.length) {
+        throw ApiError.validation({ knowledgeBaseIds: ["One or more knowledge bases do not belong to this workspace"] });
+      }
+      await replaceChatbotKnowledgeBases(ctx.workspaceId, chatbotId, unique, client);
+    }
+
+    const patch: ChatbotPatch = {
+      name: input.name,
+      description: input.description === undefined ? undefined : input.description?.trim() ? input.description.trim() : null,
+      instructions: input.instructions,
+      welcomeMessage: input.welcomeMessage,
+      status: input.status,
+      modelConfig: input.modelConfig ? { ...DEFAULT_MODEL_CONFIG, ...input.modelConfig } : undefined,
+      appearance: input.appearance ? { ...DEFAULT_APPEARANCE, ...input.appearance } : undefined,
+      allowedDomains: input.allowedDomains ? [...new Set(input.allowedDomains)] : undefined,
+    };
+    await updateChatbotRow(ctx.workspaceId, chatbotId, patch, client);
+
+    const updated = await findChatbotById(ctx.workspaceId, chatbotId, client);
+    if (!updated) throw ApiError.notFound("Chatbot not found");
+
+    if (input.status && input.status !== existing.status) {
+      await recordActivity(
+        {
+          workspaceId: ctx.workspaceId,
+          actorId: ctx.userId,
+          entityType: "chatbot",
+          entityId: chatbotId,
+          action: `status:${input.status}`,
+          summary: `Set chatbot “${updated.name}” to ${input.status}`,
+        },
+        client,
+      );
+    } else {
+      await recordActivity(
+        {
+          workspaceId: ctx.workspaceId,
+          actorId: ctx.userId,
+          entityType: "chatbot",
+          entityId: chatbotId,
+          action: "updated",
+          summary: `Updated chatbot “${updated.name}”`,
+          metadata: { fields: Object.keys(input) },
+        },
+        client,
+      );
+    }
+    return updated;
+  });
+}
+
+export async function deleteChatbot(ctx: ActorContext, chatbotId: string): Promise<void> {
+  const existing = await findChatbotById(ctx.workspaceId, chatbotId);
+  if (!existing) throw ApiError.notFound("Chatbot not found");
+  await deleteChatbotRow(ctx.workspaceId, chatbotId);
+  await recordActivity({
+    workspaceId: ctx.workspaceId,
+    actorId: ctx.userId,
+    entityType: "chatbot",
+    entityId: chatbotId,
+    action: "deleted",
+    summary: `Deleted chatbot “${existing.name}”`,
+  });
+}
