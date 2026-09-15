@@ -1,5 +1,6 @@
 import type { WorkflowNode } from "@/features/workflows/domain/definition";
 import {
+  agentRunConfigSchema,
   aiClassifyConfigSchema,
   aiGenerateConfigSchema,
   branchConfigSchema,
@@ -50,6 +51,13 @@ export function describeNodeConfig(node: WorkflowNode): string {
     case "ai.classify": {
       const parsed = aiClassifyConfigSchema.safeParse(node.config);
       return parsed.success ? `Into ${parsed.data.categories.join(" / ")}` : fallback;
+    }
+    case "agent.run": {
+      const parsed = agentRunConfigSchema.safeParse(node.config);
+      // This layer is pure and cannot look the agent up, so it describes the
+      // task; the config form is where the agent's name is shown.
+      if (!parsed.success) return fallback;
+      return parsed.data.agentId ? clip(parsed.data.task) : "No agent chosen yet";
     }
     case "condition.branch": {
       const parsed = branchConfigSchema.safeParse(node.config);
@@ -119,6 +127,16 @@ export interface NodeDetail {
  */
 export function describeNodeDetails(node: WorkflowNode): NodeDetail[] {
   switch (node.type) {
+    case "agent.run": {
+      const parsed = agentRunConfigSchema.safeParse(node.config);
+      if (!parsed.success) return [];
+      return [
+        { label: "Agent", value: parsed.data.agentId ? "Chosen" : "Not chosen" },
+        { label: "Task", value: clip(parsed.data.task, 120) },
+        { label: "Stores answer as", value: `{{vars.${parsed.data.outputKey}}}` },
+        { label: "MCP tools", value: "Off inside workflows" },
+      ];
+    }
     case "trigger.manual": {
       const parsed = manualTriggerConfigSchema.safeParse(node.config);
       return parsed.success && parsed.data.note.length > 0 ? [{ label: "Note", value: clip(parsed.data.note, 120) }] : [];
@@ -195,6 +213,10 @@ export function describeNodeDetails(node: WorkflowNode): NodeDetail[] {
       // Names only: a header value is a credential often enough that showing
       // one in a shareable diagram is never worth it.
       if (headerNames.length > 0) details.push({ label: "Headers", value: headerNames.join(", ") });
+      // That a step authenticates is worth showing; which credential it uses is
+      // an id this module cannot resolve, and the name would be a lookup a
+      // diagram has no business doing.
+      if (parsed.data.credentialId.length > 0) details.push({ label: "Credential", value: "Attached at run time" });
       if (parsed.data.allowedHosts.length > 0) details.push({ label: "Allowed hosts", value: parsed.data.allowedHosts.join(", ") });
       return details;
     }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emailSchema } from "@/features/auth/schemas";
 import {
   MAX_AVATAR_URL_LENGTH,
   MAX_USER_NAME_LENGTH,
@@ -27,6 +28,22 @@ export type WorkspaceGeneralFormValues = z.infer<typeof workspaceGeneralFormSche
 
 export const updateMemberRoleSchema = z.object({ role: memberRoleSchema });
 export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleSchema>;
+
+/**
+ * Inviting reuses `emailSchema` from auth so an invitation and the sign-up it
+ * leads to normalise the address identically - lowercased and trimmed. A
+ * mismatch there would mean an invitation nobody can accept.
+ */
+export const inviteMemberSchema = z.object({
+  email: emailSchema,
+  role: memberRoleSchema,
+});
+
+export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+/** The form defaults to the least privileged role that can still do work. */
+export const inviteMemberFormSchema = inviteMemberSchema;
+export type InviteMemberFormValues = z.infer<typeof inviteMemberFormSchema>;
 
 /**
  * Avatars are rendered in an `<img>`, never fetched by the server, so the only

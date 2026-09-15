@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, count, desc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 import type { PoolClient } from "pg";
 
 import { DEFAULT_APPEARANCE, DEFAULT_MODEL_CONFIG } from "@/features/chatbots/constants";
@@ -14,10 +15,13 @@ import type {
   ChatbotStatus,
   ChatbotSummary,
 } from "@/features/chatbots/types";
-import { query, queryOne, withDb } from "@/server/db/client";
-import { chatbotCollections, chatbots, conversations, knowledgeCollections, knowledgeSources } from "@/server/db/schema";
+import { queryOne, withDb } from "@/server/db/client";
+import { agents, chatbotCollections, chatbots, conversations, knowledgeCollections, knowledgeSources } from "@/server/db/schema";
 import { normalizePage, toIso, toIsoRequired, toPaginated } from "@/server/db/sql";
 import type { Paginated } from "@/types/pagination";
+
+/** Connection-less builder, used only to COMPOSE correlated subqueries. */
+const qb = new QueryBuilder();
 
 /**
  * Chatbot persistence.
@@ -30,7 +34,9 @@ import type { Paginated } from "@/types/pagination";
  *    it was in raw SQL, and Row Level Security remains the second line.
  * 2. When a query is genuinely SQL-shaped - date-window aggregates, ranking,
  *    `generate_series` - it stays raw. Forcing it through a builder would make
- *    it longer and no safer. Those queries keep using `query()`.
+ *    it longer and no safer. One such query is left in this file, and every
+ *    remaining exception in the codebase is classified in
+ *    `docs/drizzle-orm-migration-plan.md`.
  *
  * The exported signatures are unchanged from the hand-written version, so no
  * service or route had to be touched.
@@ -47,17 +53,31 @@ const chatbotSelection = {
   instructions: chatbots.instructions,
   welcomeMessage: chatbots.welcomeMessage,
   modelConfig: chatbots.modelConfig,
+  agentId: chatbots.agentId,
+  // Read through the same workspace the chatbot is in, so a name can never be
+  // borrowed from another tenant's agent even if a row were somehow mislinked.
+  //
+  // Composed with the builder, not written as one `sql` template: in a select
+  // list with no join Drizzle renders an interpolated column without its table
+  // name, so the correlation would collapse to `"id" = "agent_id"` against the
+  // INNER table and match nothing.
+  agentName: sql<string | null>`${qb
+    .select({ name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.id, chatbots.agentId), eq(agents.workspaceId, chatbots.workspaceId)))}`,
   appearance: chatbots.appearance,
   allowedDomains: chatbots.allowedDomains,
   embedKey: chatbots.embedKey,
   createdAt: chatbots.createdAt,
   updatedAt: chatbots.updatedAt,
-  conversationCount: sql<number>`(SELECT count(*) FROM ${conversations} WHERE ${conversations.chatbotId} = ${chatbots.id})`.mapWith(
-    Number,
-  ),
-  collectionIds: sql<
-    string[] | null
-  >`(SELECT array_agg(${chatbotCollections.collectionId}) FROM ${chatbotCollections} WHERE ${chatbotCollections.chatbotId} = ${chatbots.id})`,
+  conversationCount: sql<number>`${qb
+    .select({ c: sql`count(*)` })
+    .from(conversations)
+    .where(eq(conversations.chatbotId, chatbots.id))}`.mapWith(Number),
+  collectionIds: sql<string[] | null>`${qb
+    .select({ ids: sql`array_agg(${chatbotCollections.collectionId})` })
+    .from(chatbotCollections)
+    .where(eq(chatbotCollections.chatbotId, chatbots.id))}`,
 };
 
 function mapChatbot(row: {
@@ -70,6 +90,8 @@ function mapChatbot(row: {
   instructions: string;
   welcomeMessage: string;
   modelConfig: unknown;
+  agentId: string | null;
+  agentName: string | null;
   appearance: unknown;
   allowedDomains: string[];
   embedKey: string;
@@ -91,6 +113,8 @@ function mapChatbot(row: {
     // jsonb is `unknown` by design: the database does not enforce its shape, so
     // the defaults below are what make a partially written blob safe to render.
     modelConfig: { ...DEFAULT_MODEL_CONFIG, ...((row.modelConfig ?? {}) as Partial<ChatbotModelConfig>) },
+    agentId: row.agentId,
+    agentName: row.agentName,
     appearance: { ...DEFAULT_APPEARANCE, ...((row.appearance ?? {}) as Partial<ChatbotAppearance>) },
     allowedDomains: row.allowedDomains ?? [],
     embedKey: row.embedKey,
@@ -111,6 +135,8 @@ function toSummary(chatbot: Chatbot): ChatbotSummary {
     status: chatbot.status,
     conversationCount: chatbot.conversationCount,
     collectionCount: chatbot.collectionCount,
+    agentId: chatbot.agentId,
+    agentName: chatbot.agentName,
     createdAt: chatbot.createdAt,
     updatedAt: chatbot.updatedAt,
   };
@@ -222,6 +248,8 @@ export interface ChatbotPatch {
   welcomeMessage?: string;
   status?: ChatbotStatus;
   modelConfig?: ChatbotModelConfig;
+  /** `null` unlinks the agent and returns the chatbot to its own configuration. */
+  agentId?: string | null;
   appearance?: ChatbotAppearance;
   allowedDomains?: string[];
 }
@@ -242,6 +270,7 @@ export async function updateChatbotRow(
   if (patch.welcomeMessage !== undefined) values.welcomeMessage = patch.welcomeMessage;
   if (patch.status !== undefined) values.status = patch.status;
   if (patch.modelConfig !== undefined) values.modelConfig = patch.modelConfig;
+  if (patch.agentId !== undefined) values.agentId = patch.agentId;
   if (patch.appearance !== undefined) values.appearance = patch.appearance;
   if (patch.allowedDomains !== undefined) values.allowedDomains = patch.allowedDomains;
 
@@ -293,6 +322,29 @@ export async function countWorkspaceKnowledgeBases(workspaceId: string, ids: str
   return rows[0]?.total ?? 0;
 }
 
+/**
+ * The chatbots currently deploying an agent.
+ *
+ * Asked before an agent is archived or deleted, so the refusal can name what is
+ * still using it instead of surfacing a foreign-key violation. Lives here
+ * because it is a question about chatbots; `agent-service.ts` is the caller.
+ */
+export async function findChatbotsDeployingAgent(
+  workspaceId: string,
+  agentId: string,
+  client?: PoolClient,
+): Promise<Array<{ id: string; name: string; status: ChatbotStatus }>> {
+  return withDb(
+    (db) =>
+      db
+        .select({ id: chatbots.id, name: chatbots.name, status: chatbots.status })
+        .from(chatbots)
+        .where(and(eq(chatbots.workspaceId, workspaceId), eq(chatbots.agentId, agentId)))
+        .orderBy(chatbots.name),
+    client,
+  );
+}
+
 export async function deleteChatbotRow(workspaceId: string, chatbotId: string): Promise<boolean> {
   const rows = await withDb((db) =>
     db
@@ -310,10 +362,16 @@ export async function listKnowledgeOptions(workspaceId: string, chatbotId: strin
         id: knowledgeCollections.id,
         name: knowledgeCollections.name,
         status: knowledgeCollections.status,
-        sourceCount: sql<number>`(SELECT count(*) FROM ${knowledgeSources} WHERE ${knowledgeSources.collectionId} = ${knowledgeCollections.id})`.mapWith(
-          Number,
-        ),
-        attached: sql<boolean>`EXISTS (SELECT 1 FROM ${chatbotCollections} WHERE ${chatbotCollections.collectionId} = ${knowledgeCollections.id} AND ${chatbotCollections.chatbotId} = ${chatbotId})`,
+        sourceCount: sql<number>`${qb
+          .select({ c: sql`count(*)` })
+          .from(knowledgeSources)
+          .where(eq(knowledgeSources.collectionId, knowledgeCollections.id))}`.mapWith(Number),
+        attached: sql<boolean>`EXISTS ${qb
+          .select({ one: sql`1` })
+          .from(chatbotCollections)
+          .where(
+            and(eq(chatbotCollections.collectionId, knowledgeCollections.id), eq(chatbotCollections.chatbotId, chatbotId)),
+          )}`,
       })
       .from(knowledgeCollections)
       .where(eq(knowledgeCollections.workspaceId, workspaceId))
@@ -332,9 +390,11 @@ export async function listKnowledgeOptions(workspaceId: string, chatbotId: strin
 /**
  * Overview counters.
  *
- * Left as raw SQL on purpose: four correlated date-window aggregates in one
- * round trip. A query builder would turn this into more code that produces the
- * same string, and the string is the part worth reading.
+ * The four window counts are left as raw SQL on purpose: four correlated
+ * date-window aggregates in one round trip. A query builder would turn that
+ * into more code producing the same string, and the string is the part worth
+ * reading. The recent conversations beside them are an ordinary read and go
+ * through Drizzle.
  */
 export async function getChatbotOverview(workspaceId: string, chatbotId: string): Promise<ChatbotOverview> {
   const [counts, recent] = await Promise.all([
@@ -346,11 +406,22 @@ export async function getChatbotOverview(workspaceId: string, chatbotId: string)
          (SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.workspace_id = $1 AND c.chatbot_id = $2 AND m.created_at >= now() - interval '14 days' AND m.created_at < now() - interval '7 days') AS msg_prev`,
       [workspaceId, chatbotId],
     ),
-    query<{ id: string; title: string | null; status: string; channel: string; message_count: number; last_message_at: Date | null }>(
-      `SELECT id, title, status, channel, message_count, last_message_at
-       FROM conversations WHERE workspace_id = $1 AND chatbot_id = $2
-       ORDER BY last_message_at DESC NULLS LAST, created_at DESC LIMIT 5`,
-      [workspaceId, chatbotId],
+    withDb((db) =>
+      db
+        .select({
+          id: conversations.id,
+          title: conversations.title,
+          status: conversations.status,
+          channel: conversations.channel,
+          messageCount: conversations.messageCount,
+          lastMessageAt: conversations.lastMessageAt,
+        })
+        .from(conversations)
+        .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.chatbotId, chatbotId)))
+        // NULLS LAST is explicit: PostgreSQL defaults DESC to NULLS FIRST,
+        // which would put threads that have never had a message first.
+        .orderBy(sql`${conversations.lastMessageAt} DESC NULLS LAST`, desc(conversations.createdAt))
+        .limit(5),
     ),
   ]);
   return {
@@ -363,8 +434,8 @@ export async function getChatbotOverview(workspaceId: string, chatbotId: string)
       title: row.title,
       status: row.status,
       channel: row.channel,
-      messageCount: row.message_count,
-      lastMessageAt: toIso(row.last_message_at),
+      messageCount: row.messageCount,
+      lastMessageAt: toIso(row.lastMessageAt),
     })),
   };
 }

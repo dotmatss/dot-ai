@@ -44,8 +44,34 @@ families, and connects by name. The window described above is open in
 production. Do not re-introduce pinning without changing the deployment target
 first - on Workers it cannot work.
 
-`pg` would additionally need Hyperdrive, since per-isolate pooling is not the
-same thing as a pool.
+### The database on Workers
+
+`pg` additionally needs Hyperdrive, since per-isolate pooling is not the same
+thing as a pool. This has been done: `src/server/db/client.ts` acquires
+connections through `withConnection()`, which keeps the long-lived `pg.Pool` on
+Node and opens one `pg.Client` per acquisition against the Hyperdrive binding on
+Workers. A pool cannot be cached across requests there - a socket opened during
+one request cannot be used by the next, and reusing one raises "Cannot perform
+I/O on behalf of a different request".
+
+Two consequences worth knowing before changing anything in that file:
+
+- **RLS still holds.** Hyperdrive pools in *transaction mode*, and
+  `withWorkspace()` sets `app.workspace_id` with a transaction-local
+  `set_config`, so it is discarded at COMMIT. A connection handed back to
+  Hyperdrive cannot carry one workspace's id into another workspace's queries.
+- **It is the pattern Cloudflare warns about.** Holding a transaction open for
+  the duration of a request is how this application applies RLS, and it is also
+  what Hyperdrive's documentation advises against, because the connection
+  cannot be reused by another isolate while the transaction is open. Correct,
+  but it puts a ceiling on concurrency that a Node deployment does not have.
+  This is the first thing to measure if the app is connection-starved on
+  Workers.
+
+`vinext` also rejects the middleware matcher Next.js accepts: a negative
+lookahead containing `.*\.(?:ext|ext)$` fails its pattern compiler with
+"ambiguous sequence expansion". `src/proxy.ts` tests those extensions in the
+function body instead.
 
 ### Running on Cloudflare without the downgrade
 

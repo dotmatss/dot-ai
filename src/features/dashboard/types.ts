@@ -24,15 +24,8 @@ export interface UsageSummary {
   messagesLast30Days: number;
 }
 
-export interface ActivityEntry {
-  id: string;
-  actorName: string | null;
-  entityType: string;
-  entityId: string | null;
-  action: string;
-  summary: string;
-  createdAt: string;
-}
+/* `ActivityEntry` moved to the audit feature, which owns the activity log:
+   see `AuditEntry` in `src/features/audit/types.ts`. */
 
 export interface ChatbotPerformanceRow {
   id: string;

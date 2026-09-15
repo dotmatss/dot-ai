@@ -18,7 +18,7 @@ function NavTree({ onNavigate }: { onNavigate?: () => void }) {
     <nav aria-label="Documentation" className="flex flex-col gap-6">
       {DOC_SECTIONS.map((section) => (
         <div key={section.title}>
-          <h2 className="px-2.5 text-caption font-medium uppercase tracking-[0.08em] text-foreground-subtle">
+          <h2 className="px-2.5 text-caption font-medium uppercase tracking-caption text-foreground-subtle">
             {section.title}
           </h2>
           <ul className="mt-2 flex flex-col gap-0.5">

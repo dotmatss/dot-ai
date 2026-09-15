@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { PERIOD_META } from "@/features/analytics/constants";
 import {
   alignSeries,
-  axisLabelEvery,
   bucketStepMs,
   formatBucketLabel,
   formatBucketRange,
@@ -99,23 +98,5 @@ describe("formatBucketLabel and formatBucketRange", () => {
   it("shows a day bucket as one date and a week bucket as a span", () => {
     expect(formatBucketRange("2024-03-04T00:00:00.000Z", "day")).toBe("Mar 4");
     expect(formatBucketRange("2024-03-04T00:00:00.000Z", "week")).toBe("Mar 4 – Mar 10");
-  });
-});
-
-describe("axisLabelEvery", () => {
-  it("keeps every label when they all fit", () => {
-    expect(axisLabelEvery(7)).toBe(1);
-    expect(axisLabelEvery(8)).toBe(1);
-  });
-
-  it("thins labels so 90 daily buckets do not collide", () => {
-    expect(axisLabelEvery(30)).toBe(4);
-    expect(axisLabelEvery(90)).toBe(12);
-    expect(axisLabelEvery(90, 6)).toBe(15);
-  });
-
-  it("never returns a step of zero for an empty series", () => {
-    expect(axisLabelEvery(0)).toBe(1);
-    expect(axisLabelEvery(5, 0)).toBe(5);
   });
 });

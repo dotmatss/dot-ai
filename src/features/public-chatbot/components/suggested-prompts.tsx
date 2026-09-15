@@ -13,7 +13,7 @@ import { SUGGESTED_PROMPTS } from "@/features/public-chatbot/constants";
 export function SuggestedPrompts({ onSelect, disabled }: { onSelect: (prompt: string) => void; disabled?: boolean }) {
   return (
     <div>
-      <p className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-subtle">Try asking</p>
+      <p className="text-caption font-medium uppercase tracking-caption text-foreground-subtle">Try asking</p>
       <ul className="mt-2.5 flex flex-col gap-1.5">
         {SUGGESTED_PROMPTS.map((suggestion) => (
           <li key={suggestion.prompt}>

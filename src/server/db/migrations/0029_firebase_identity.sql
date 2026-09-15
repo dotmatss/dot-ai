@@ -1,0 +1,64 @@
+-- 0029_firebase_identity
+--
+-- Makes Firebase Authentication usable as the identity provider ADR 0001
+-- reserved a seam for, without moving a single authorization decision out of
+-- this database.
+--
+-- WHAT THIS DOES NOT ADD, AND WHY
+-- --------------------------------
+-- There is no `users.firebase_uid` column. The link from a Firebase account to
+-- an application user already has a home: `user_identities`, created in 0001
+-- with `UNIQUE (provider, provider_uid)` for exactly this purpose, and already
+-- read and written by `findOrCreateUserForIdentity()`. Firebase is one more
+-- row in it with `provider = 'firebase'`:
+--
+--     Firebase UID -> user_identities.provider_uid -> user_identities.user_id
+--                  -> users.id  (the id the application has always used)
+--
+-- A dedicated column would be a SECOND place claiming to hold the same fact,
+-- and the two could disagree - a link written to one and not the other is a
+-- user who exists twice or not at all, depending on which query ran. It would
+-- also have to be widened, or joined by a second column, the first time Google
+-- or any other provider is enabled, because a user may hold more than one
+-- external identity but can only hold one `firebase_uid`.
+--
+-- The uniqueness guarantee the design depends on is therefore already in
+-- place: no two application users can claim the same Firebase UID, enforced by
+-- `user_identities_provider_provider_uid_key`, not by application code.
+--
+-- There is also no `users.role` and no `users.status` here. Roles are held per
+-- organization in `organization_members.role`, and platform operators in
+-- `platform_admins` (0023), which no HTTP request can write to. Adding a role
+-- column to `users` would create a second, global answer to "what may this
+-- person do", and every authorization check would then have to decide which of
+-- the two wins. Firebase authenticates; these two tables continue to authorize.
+
+-- Mirrors the Firebase `email_verified` claim so application logic can gate on
+-- it without a network call, and so a disabled or deleted Firebase account
+-- leaves a readable trail here.
+--
+-- Firebase remains the source of truth. This column is only ever written by
+-- the server, from a verified ID token (see `syncEmailVerified`); nothing
+-- reachable from a client can set it, which is why there is no default of
+-- `true` and no application path that writes one.
+ALTER TABLE users ADD COLUMN email_verified boolean NOT NULL DEFAULT false;
+
+-- Grandfathering, deliberately.
+--
+-- Every account that exists when this migration runs predates verification
+-- entirely: it was created by a password sign-up that never asked for one, or
+-- by an invitation whose link was itself proof of address ownership. Leaving
+-- them `false` would not make them more trustworthy - it would lock 100+ real
+-- accounts out of features they already use, at the moment of a deploy, with
+-- no warning and no action they had been told to take.
+--
+-- New accounts get `false` from the column default and must verify. This
+-- statement affects only rows that already exist; it does not repeat.
+UPDATE users SET email_verified = true;
+
+-- `user_identities` is read by provider+uid on every external sign-in, which
+-- the unique constraint already indexes. This is the other direction: "which
+-- identities does this user hold", asked by the account screen and by the
+-- migration tooling, and used by the FK's cascade on delete. One small index
+-- on a table with one row per user per provider.
+CREATE INDEX user_identities_user_id_idx ON user_identities(user_id);

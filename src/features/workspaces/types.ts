@@ -1,3 +1,4 @@
+import type { OrganizationStatus } from "@/features/platform/types";
 import type { MemberRole } from "@/features/workspaces/roles";
 
 export interface OrganizationSummary {
@@ -19,6 +20,21 @@ export interface WorkspaceMembership {
   workspace: WorkspaceSummary;
   organization: OrganizationSummary;
   role: MemberRole;
+  /**
+   * Lifecycle owned by the PLATFORM plane, not by the organization (0023).
+   *
+   * Lives on the membership rather than on `OrganizationSummary` because that
+   * shape is also a display/picker type - a form listing organizations to
+   * choose between has no use for a suspension state, and making it carry one
+   * would push a platform concern into four unrelated call sites. This is a
+   * property of whether THIS membership currently grants access, which is
+   * exactly what a membership models.
+   *
+   * `requireWorkspaceAccess` and `requireApiWorkspaceAccess` are the only
+   * readers; carrying the value rather than folding it into the membership
+   * query is what lets them explain the refusal instead of returning a 404.
+   */
+  organizationStatus: OrganizationStatus;
 }
 
 export interface CurrentUser {
@@ -26,4 +42,14 @@ export interface CurrentUser {
   email: string;
   name: string;
   avatarUrl: string | null;
+  /**
+   * Mirror of the identity provider's verification state (0029).
+   *
+   * Carried on the authenticated user rather than re-read per feature so that
+   * "is this address verified" has one answer per request, and so a page
+   * gating on it cannot accidentally gate on a client-supplied boolean - the
+   * value only ever arrives here from `users.email_verified`, which only the
+   * server writes, and only from a verified ID token.
+   */
+  emailVerified: boolean;
 }

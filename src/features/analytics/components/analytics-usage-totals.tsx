@@ -12,13 +12,15 @@ import {
   AppTableRow,
 } from "@/components/ui/app-table";
 import { AnalyticsSection } from "@/features/analytics/components/analytics-section";
-import { CURRENT_PLAN, PERIOD_META, USAGE_KIND_META } from "@/features/analytics/constants";
+import { PERIOD_META, USAGE_KIND_META } from "@/features/analytics/constants";
 import { getUsageTotals } from "@/features/analytics/server/analytics-service";
 import { USAGE_KINDS, type AnalyticsPeriod } from "@/features/analytics/types";
+import { getPlanLabel } from "@/features/billing/server/entitlements";
 import { formatNumber } from "@/lib/format/number";
 
 export async function AnalyticsUsageTotals({ workspaceId, period }: { workspaceId: string; period: AnalyticsPeriod }) {
   const totals = await getUsageTotals(workspaceId, period);
+  const plan = await getPlanLabel(workspaceId);
   const days = PERIOD_META[period].days;
   const metered = USAGE_KINDS.reduce((sum, kind) => sum + totals[kind], 0);
 
@@ -26,7 +28,7 @@ export async function AnalyticsUsageTotals({ workspaceId, period }: { workspaceI
     <AnalyticsSection
       title="Metered usage"
       description={`Everything recorded against this workspace in the last ${days} days.`}
-      aside={<AppBadge tone="neutral">{CURRENT_PLAN.name} plan</AppBadge>}
+      aside={<AppBadge tone="neutral">{plan.name}</AppBadge>}
       contentClassName="gap-4"
     >
       {metered === 0 ? (
@@ -59,7 +61,7 @@ export async function AnalyticsUsageTotals({ workspaceId, period }: { workspaceI
           </AppTable>
         </AppTableContainer>
       )}
-      <p className="text-xs text-foreground-muted">{CURRENT_PLAN.description}</p>
+      <p className="text-xs text-foreground-muted">{plan.description}</p>
     </AnalyticsSection>
   );
 }

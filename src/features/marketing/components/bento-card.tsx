@@ -43,7 +43,7 @@ export function BentoCard({ eyebrow, title, description, icon: Icon, span = 3, t
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-foreground-secondary">
           <Icon aria-hidden className="size-4" />
         </span>
-        <span className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">{eyebrow}</span>
+        <span className="text-caption font-medium uppercase tracking-caption text-foreground-muted">{eyebrow}</span>
       </div>
 
       <div className="mt-5 flex-1">

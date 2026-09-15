@@ -43,7 +43,7 @@ export function ApiPreview() {
       <div className="flex h-8 items-center border-b border-ink-700 px-3">
         <span className="text-caption font-medium uppercase tracking-wide text-ink-400">POST /api/v1/public/chat</span>
       </div>
-      <pre className="overflow-x-auto p-4 font-mono text-[11px] leading-5 text-ink-200 scrollbar-thin">
+      <pre className="overflow-x-auto p-4 font-mono text-caption leading-5 text-ink-200 scrollbar-thin">
         <code>{`curl -N https://app.example.com/api/v1/public/chat \\
   -H "Authorization: Bearer $DOT_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -87,7 +87,7 @@ export function ToolPreview() {
       {tools.map((tool) => (
         <li key={tool.name} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
           <Wrench aria-hidden className="size-3.5 text-foreground-subtle" />
-          <span className="font-mono text-[11px] text-foreground-secondary">{tool.name}</span>
+          <span className="font-mono text-caption text-foreground-secondary">{tool.name}</span>
           <span className="ml-auto inline-flex h-5 items-center rounded-full border border-border bg-surface px-2 text-caption text-foreground-muted">
             {tool.status}
           </span>
@@ -102,12 +102,12 @@ export function EmbedPreview() {
     <div className="flex flex-col gap-2" aria-hidden>
       <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
         <Globe aria-hidden className="size-3.5 text-foreground-subtle" />
-        <span className="font-mono text-[11px] text-foreground-secondary">www.yoursite.com</span>
+        <span className="font-mono text-caption text-foreground-secondary">www.yoursite.com</span>
         <Check aria-hidden className="ml-auto size-3.5 text-success" />
       </div>
       <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
         <Globe aria-hidden className="size-3.5 text-foreground-subtle" />
-        <span className="font-mono text-[11px] text-foreground-secondary">*.yoursite.com</span>
+        <span className="font-mono text-caption text-foreground-secondary">*.yoursite.com</span>
         <Check aria-hidden className="ml-auto size-3.5 text-success" />
       </div>
     </div>

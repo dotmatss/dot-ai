@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 import { citext } from "@/server/db/schema/columns";
 
@@ -10,7 +10,23 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   /** Null for accounts that only sign in through an external provider. */
   passwordHash: text("password_hash"),
+  /**
+   * Mirror of the identity provider's `email_verified` claim (0029).
+   *
+   * Firebase owns the fact; this is the copy application logic reads, so a
+   * page can gate on it without a network call. Written only by the server,
+   * only from a verified ID token - see `syncEmailVerified` in the auth
+   * service. Accounts that predate verification were backfilled to true.
+   */
+  emailVerified: boolean("email_verified").notNull().default(false),
   avatarUrl: text("avatar_url"),
+  /**
+   * Set by the platform plane to stop an account authenticating (0023).
+   * Null for every ordinary account; the DAL treats a non-null value as
+   * "no session", and disabling also deletes the user's session rows.
+   */
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  disabledReason: text("disabled_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -22,11 +38,21 @@ export const userIdentities = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /** `"firebase"` today; one row per provider a user has linked. */
     provider: text("provider").notNull(),
     providerUid: text("provider_uid").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique("user_identities_provider_provider_uid_key").on(table.provider, table.providerUid)],
+  (table) => [
+    /**
+     * The bridge from an external account to an application user, and the
+     * reason no `users.firebase_uid` column exists: this constraint already
+     * makes a provider UID claimable by at most one user, in the database
+     * rather than in application code. See migration 0029.
+     */
+    unique("user_identities_provider_provider_uid_key").on(table.provider, table.providerUid),
+    index("user_identities_user_id_idx").on(table.userId),
+  ],
 );
 
 export const sessions = pgTable(

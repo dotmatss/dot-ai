@@ -6,7 +6,7 @@
  * destructive approvals, and the ON DELETE CASCADE that is what actually
  * guarantees disconnecting a server destroys its stored credential.
  *
- *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" npx vitest run mcp-persistence
+ *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" pnpm exec vitest run mcp-persistence
  *
  * Skipped when DATABASE_URL is absent, so the default suite stays hermetic.
  */

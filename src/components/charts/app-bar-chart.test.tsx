@@ -77,6 +77,13 @@ describe("AppBarChart", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
+  it("draws the plot in HTML so the type is not scaled with it", () => {
+    // The bars used to live in a viewBox, which multiplied every unit inside
+    // it - type included - by (rendered width / 600).
+    const { container } = render(<AppBarChart data={DATA} title="Messages" valueLabel="Messages" />);
+    expect(container.querySelector("svg")).toBeNull();
+  });
+
   it("survives degenerate data instead of dividing by zero", () => {
     render(<AppBarChart data={[]} title="Nothing yet" />);
     expect(screen.getByRole("img", { name: /Nothing yet/ })).toBeInTheDocument();

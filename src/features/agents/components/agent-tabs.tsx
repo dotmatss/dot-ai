@@ -16,6 +16,7 @@ export function AgentTabs({ agentId }: { agentId: string }) {
         { href: `${base}/instructions` as Route, label: "Instructions" },
         { href: `${base}/tools` as Route, label: "Tools" },
         { href: `${base}/knowledge` as Route, label: "Knowledge" },
+        { href: `${base}/delegation` as Route, label: "Delegation" },
         { href: `${base}/memory` as Route, label: "Memory & output" },
         { href: `${base}/playground` as Route, label: "Playground" },
         { href: `${base}/settings` as Route, label: "Settings" },

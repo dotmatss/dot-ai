@@ -39,6 +39,46 @@ export interface OrganizationMember {
 export interface MembersOverview {
   members: OrganizationMember[];
   ownerCount: number;
+  /** Everything still awaiting a decision: pending and expired, never accepted. */
+  invitations: OrganizationInvitation[];
+}
+
+/**
+ * An invitation as the client may see it. There is deliberately no token and no
+ * token hash here: the link is shown exactly once, in the response to the call
+ * that created it, and is never readable again from a list.
+ */
+export interface OrganizationInvitation {
+  id: string;
+  email: string;
+  role: MemberRole;
+  /** Derived on the server from `expires_at`, so both sides agree on "expired". */
+  status: InvitationStatus;
+  invitedByName: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export const INVITATION_STATUSES = ["pending", "expired"] as const;
+export type InvitationStatus = (typeof INVITATION_STATUSES)[number];
+
+/** What the invitee is shown before they accept: no ids, no token, no member list. */
+export interface InvitationPreview {
+  organizationName: string;
+  email: string;
+  role: MemberRole;
+  /** Decided on the server, so the page never compares a date during render. */
+  status: InvitationStatus;
+  invitedByName: string | null;
+  expiresAt: string;
+}
+
+/** The one-time link, returned only to the inviter that created it. */
+export interface InvitationCreated {
+  overview: MembersOverview;
+  invitation: OrganizationInvitation;
+  /** Absolute URL built from APP_URL; the only time the raw token is disclosed. */
+  inviteUrl: string;
 }
 
 /**
@@ -100,4 +140,35 @@ export interface WorkspaceUsageSummary {
   days: number;
   totals: UsageKindTotal[];
   totalEvents: number;
+}
+
+/**
+ * The storage categories the Storage tab reports, in the order it renders them.
+ *
+ * Each names a table this workspace owns rows in. They are deliberately a
+ * closed set rather than every table with a `workspace_id`: a category earns a
+ * row here only when a person can do something about it, which means adding or
+ * deleting the records behind it.
+ */
+export const STORAGE_CATEGORIES = [
+  "knowledgeChunks",
+  "knowledgeSources",
+  "conversations",
+  "crmNotes",
+  "activityLog",
+] as const;
+export type StorageCategory = (typeof STORAGE_CATEGORIES)[number];
+
+export interface StorageCategoryTotal {
+  category: StorageCategory;
+  /** Logical size of the rows, in bytes. */
+  bytes: number;
+  /** Number of rows behind that size. */
+  rows: number;
+}
+
+export interface WorkspaceStorageSummary {
+  totals: StorageCategoryTotal[];
+  totalBytes: number;
+  totalRows: number;
 }

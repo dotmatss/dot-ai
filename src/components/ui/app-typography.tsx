@@ -87,7 +87,7 @@ export function AppCaption({ className, ...props }: ComponentPropsWithoutRef<"sp
 export function AppOverline({ className, ...props }: ComponentPropsWithoutRef<"span">) {
   return (
     <span
-      className={cn("text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted", className)}
+      className={cn("text-caption font-medium uppercase tracking-caption text-foreground-muted", className)}
       {...props}
     />
   );

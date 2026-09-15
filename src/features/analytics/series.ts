@@ -74,10 +74,3 @@ export function formatBucketRange(start: string, bucket: AnalyticsBucket): strin
   return `${formatBucketLabel(start)} – ${formatBucketLabel(end.toISOString())}`;
 }
 
-/**
- * Axis labels thinned so they never collide: 90 daily buckets cannot each carry
- * a date. Keeps the first and last, and every nth in between.
- */
-export function axisLabelEvery(count: number, maxLabels = 8): number {
-  return Math.max(1, Math.ceil(count / Math.max(1, maxLabels)));
-}

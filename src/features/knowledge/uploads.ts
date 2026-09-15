@@ -7,6 +7,8 @@
  * with an explanation instead of being ingested as mojibake.
  */
 
+import { formatBytes } from "@/lib/format/number";
+
 export const UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
 export const UPLOAD_MAX_LABEL = "5 MB";
 
@@ -63,11 +65,11 @@ export interface UploadCandidate {
 
 export type UploadValidation = { ok: true; extension: string } | { ok: false; message: string };
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+/**
+ * Re-exported so the upload rules stay one import for the dialog and the route.
+ * The implementation is shared with every other surface that prints a size.
+ */
+export { formatBytes };
 
 /**
  * Validates by extension *and* reported content type: either alone is trivial

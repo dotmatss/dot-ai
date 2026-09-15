@@ -41,7 +41,7 @@ export function IntegrationPaths() {
     <section className="border-b border-border bg-surface" aria-labelledby="integration-paths-heading">
       <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
         <div className="max-w-2xl">
-          <p className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">Deployment</p>
+          <p className="text-caption font-medium uppercase tracking-caption text-foreground-muted">Deployment</p>
           <h2 id="integration-paths-heading" className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
             Two ways to reach your customers
           </h2>

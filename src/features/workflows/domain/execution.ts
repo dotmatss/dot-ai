@@ -9,6 +9,7 @@ import {
 import { defaultOutgoingEdges, outgoingEdges } from "@/features/workflows/domain/graph";
 import {
   aiClassifyConfigSchema,
+  agentRunConfigSchema,
   aiGenerateConfigSchema,
   branchConfigSchema,
   conversationTriggerConfigSchema,
@@ -66,6 +67,53 @@ export interface ExecutionResult {
   context: RunContext;
 }
 
+/**
+ * What an `agent.run` step needs back. A structural subset of the agents
+ * feature's `AgentExecutionResult`, declared here for the same reason
+ * `WorkflowAiGateway` is: the engine stays a leaf that any caller can satisfy
+ * with a stub, and a change to the agents feature cannot silently widen what a
+ * workflow step is allowed to see.
+ */
+export interface WorkflowAgentResult {
+  executionId: string;
+  status: "succeeded" | "failed" | "timed_out" | "refused" | "running";
+  /** The agent's final answer. Never its prompt, its tool calls or its sources. */
+  output: string | null;
+  error: string | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+  requiresApproval: boolean;
+}
+
+/**
+ * Runs one agent to completion. Provided by the server executor, which binds it
+ * to the run's workspace and to a tool policy; absent in the pure engine, so a
+ * definition that contains an agent step cannot execute anywhere the server
+ * did not deliberately allow it.
+ */
+export type WorkflowAgentRunner = (input: { agentId: string; task: string; signal?: AbortSignal }) => Promise<WorkflowAgentResult>;
+
+/**
+ * What an `tool.http_request` step needs to authenticate itself.
+ *
+ * Declared here as a structural type for the same reason `WorkflowAgentRunner`
+ * is: the engine stays a leaf that a test can satisfy with a stub, and it never
+ * learns where a credential is stored or how it is encrypted. It receives one
+ * header, already assembled.
+ *
+ * Provided by the server executor, bound to the run's workspace, so a
+ * credential id in a definition is resolved through THAT workspace - an id
+ * copied in from anywhere else is simply "not available".
+ */
+export interface WorkflowCredential {
+  /** Safe to show in a run timeline. The value behind it is not. */
+  name: string;
+  headerName: string;
+  headerValue: string;
+}
+
+/** Returns `null` when the id does not name a credential in the run's workspace. */
+export type WorkflowCredentialResolver = (credentialId: string) => Promise<WorkflowCredential | null>;
+
 export interface ExecuteDefinitionOptions {
   definition: WorkflowDefinition;
   gateway: WorkflowAiGateway;
@@ -74,8 +122,12 @@ export interface ExecuteDefinitionOptions {
   signal?: AbortSignal;
   /** Injected in tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** Required only when a `tool.http_request` step names a credential. */
+  resolveCredential?: WorkflowCredentialResolver;
   now?: () => Date;
   maxSteps?: number;
+  /** Required only when the definition contains an `agent.run` step. */
+  runAgent?: WorkflowAgentRunner;
 }
 
 export const MAX_RUN_STEPS = 40;
@@ -225,6 +277,8 @@ interface NodeRunDeps {
   usage: ExecutionUsage;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
+  runAgent?: WorkflowAgentRunner;
+  resolveCredential?: WorkflowCredentialResolver;
 }
 
 async function runHttpRequest(node: WorkflowNode, deps: NodeRunDeps): Promise<NodeOutcome> {
@@ -236,11 +290,19 @@ async function runHttpRequest(node: WorkflowNode, deps: NodeRunDeps): Promise<No
     headers[name] = renderTemplate(value, deps.context).text;
   }
   const missingVariables = [...new Set([...url.missing, ...(body?.missing ?? [])])];
+  // Built from the step's OWN headers only. A resolved credential is merged
+  // into the outgoing request further down and never into this object, which
+  // is what is stored on the run row and returned to the browser - so the
+  // credential's value cannot reach either, whatever its header is called.
+  // `redactHeaders` still applies, because an author can type a token here too.
   const summary = {
     method: config.method,
     url: url.text,
     headers: redactHeaders(headers),
     body: body?.text ?? null,
+    // The reference, not the value. Replaced by the credential's name below
+    // once the step actually resolves one.
+    credential: config.credentialId.length > 0 ? config.credentialId : null,
     missingVariables,
   };
 
@@ -257,6 +319,28 @@ async function runHttpRequest(node: WorkflowNode, deps: NodeRunDeps): Promise<No
   const check = checkOutboundUrl(url.text, config.allowedHosts);
   if (!check.ok) throw new NodeExecutionError(check.reason, { ...summary, simulated: true });
 
+  // Resolved only now: a simulated step must not decrypt anything, and this is
+  // the first point at which the request is certainly going to be sent.
+  const outboundHeaders = { ...headers };
+  if (config.credentialId.length > 0) {
+    if (!deps.resolveCredential) {
+      throw new NodeExecutionError("Credentials are not available in this context.", { ...summary, simulated: true });
+    }
+    const credential = await deps.resolveCredential(config.credentialId);
+    if (!credential) {
+      // Named as configuration rather than as a failure of the destination:
+      // the credential was deleted, and that is what the operator must fix.
+      throw new NodeExecutionError("The credential for this step is no longer available.", {
+        ...summary,
+        simulated: true,
+      });
+    }
+    // Last, so it wins over a header of the same name typed into the step. The
+    // stored credential is the one an operator can rotate in one place.
+    outboundHeaders[credential.headerName] = credential.headerValue;
+    summary.credential = credential.name;
+  }
+
   const controller = new AbortController();
   let timedOut = false;
   const timeoutMs = Math.min(config.timeoutMs, MAX_REQUEST_TIMEOUT_MS);
@@ -270,7 +354,7 @@ async function runHttpRequest(node: WorkflowNode, deps: NodeRunDeps): Promise<No
   try {
     const response = await deps.fetchImpl(check.url, {
       method: config.method,
-      headers,
+      headers: outboundHeaders,
       body: config.method === "GET" || config.method === "DELETE" ? undefined : (body?.text ?? undefined),
       // A redirect could point at a private address, which would bypass the
       // egress check, so redirects are surfaced instead of followed.
@@ -339,6 +423,35 @@ async function runNode(node: WorkflowNode, deps: NodeRunDeps): Promise<NodeOutco
         });
       }
       return { output: { title: config.title, fields: config.fields, values: pickValues(deps.context.input, config.fields) } };
+    }
+    case "agent.run": {
+      const config = parseConfig(agentRunConfigSchema, node);
+      // Both refusals are the step's, not the engine's, so the run timeline
+      // shows which step could not proceed and why.
+      if (!deps.runAgent) throw new NodeExecutionError("Agent steps cannot run in this context.");
+      if (!config.agentId) throw new NodeExecutionError("Choose an agent for this step.");
+
+      const task = renderTemplate(config.task, deps.context);
+      const result = await deps.runAgent({ agentId: config.agentId, task: task.text, signal: deps.signal });
+
+      // The agent's tokens are metered by the agent engine against the agent
+      // that spent them, so they are NOT added to the run's usage here: one
+      // model call, billed once, where it happened. The step keeps a copy so
+      // the timeline can show what the agent cost.
+      const summary = {
+        executionId: result.executionId,
+        status: result.status,
+        requiresApproval: result.requiresApproval,
+        usage: result.usage,
+        missingVariables: task.missing,
+      };
+      if (result.status !== "succeeded" || result.output === null) {
+        throw new NodeExecutionError(result.error ?? "The agent could not complete the task.", summary);
+      }
+      return {
+        output: { ...summary, answer: result.output },
+        vars: { [config.outputKey]: result.output },
+      };
     }
     case "ai.generate": {
       const config = parseConfig(aiGenerateConfigSchema, node);
@@ -485,8 +598,30 @@ export async function executeDefinition(options: ExecuteDefinitionOptions): Prom
   let current = findTriggerNode(definition);
   if (!current) return failure("This workflow has no trigger step.");
 
+  // Refused before the first step rather than at the agent step, so a run that
+  // cannot finish does not start: an earlier action step may have side effects.
+  if (!options.runAgent && definition.nodes.some((node) => node.type === "agent.run")) {
+    return failure("This workflow runs an agent, which is not available in this context.");
+  }
+  if (
+    !options.resolveCredential &&
+    definition.nodes.some(
+      (node) => node.type === "tool.http_request" && typeof node.config.credentialId === "string" && node.config.credentialId.length > 0,
+    )
+  ) {
+    return failure("This workflow uses a stored credential, which is not available in this context.");
+  }
+
   const visited = new Set<string>();
-  const deps: NodeRunDeps = { context, gateway, usage, fetchImpl, signal: options.signal };
+  const deps: NodeRunDeps = {
+    context,
+    gateway,
+    usage,
+    fetchImpl,
+    signal: options.signal,
+    runAgent: options.runAgent,
+    resolveCredential: options.resolveCredential,
+  };
 
   while (current) {
     if (steps.length >= maxSteps) return failure(`The run stopped after ${maxSteps} steps to avoid an endless loop.`);

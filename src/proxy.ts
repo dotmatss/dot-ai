@@ -2,8 +2,27 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const SESSION_COOKIE = "dot_session";
 
-/** Pages that must render for signed-out visitors. */
-const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/embed", "/docs"];
+/**
+ * Pages that must render for signed-out visitors.
+ *
+ * `/invite` is here because an invitation link is sent to someone who, by
+ * definition, may not have an account yet: bouncing them to /sign-in would show
+ * a sign-in form to a person who needs the sign-up half of the page, and lose
+ * the context of which organization invited them. The page itself reveals
+ * nothing without a valid token.
+ */
+const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/invite", "/embed", "/docs"];
+
+/**
+ * Static files, which must pass through untouched.
+ *
+ * This lived in the `matcher` below as a negative lookahead, which Next.js
+ * accepts but vinext rejects ("ambiguous sequence expansion") when it compiles
+ * the pattern for Workers. Testing it here instead is equivalent: a request
+ * that the lookahead used to exclude never reached this function, and now
+ * reaches it and is passed straight through.
+ */
+const STATIC_FILE = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|js|css|map|txt|woff2?)$/;
 
 /**
  * Optimistic navigation gate.
@@ -27,6 +46,7 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith("/api")) return NextResponse.next();
+  if (STATIC_FILE.test(pathname)) return NextResponse.next();
 
   const isPublic = PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   if (isPublic || pathname === "/") return NextResponse.next();
@@ -44,7 +64,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Skip static assets and Next internals.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|js|css|map|txt|woff2?)$).*)",
+    // Skip Next internals. Static files are filtered in the function above,
+    // where the pattern does not have to survive two different compilers.
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };

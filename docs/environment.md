@@ -15,6 +15,14 @@ Copy `.env.example` to `.env.local` (git-ignored) and fill in values. Only `src/
 
 `NEXT_PUBLIC_*` variables are inlined into browser bundles at build time. None are used today; add one only for values that are safe to publish.
 
+## What does NOT belong here
+
+This table is **platform** configuration: one set of values for the whole deployment, validated at boot, changed by an operator.
+
+A credential that belongs to one workspace is not platform configuration. One process serves every tenant, so an environment variable cannot mean "this workspace's Stripe key", a customer cannot rotate one without a redeploy, and every workspace would share it. Those live in `workspace_credentials` (Integrations → Credentials), encrypted per workspace and resolved at run time by `src/features/integrations/server/credential-resolver.ts`. See ADR 0006.
+
+The line is direction, not sensitivity: `AI_GATEWAY_API_KEY` is ours and belongs here; a token a customer pastes in to reach their own CRM belongs in the credential store.
+
 ## Planned infrastructure bindings
 
 - **Cloudflare**: CDN/WAF/rate limiting in front of the app; AI Gateway behind `AI_GATEWAY_BASE_URL`; R2 for knowledge-source files (upload boundary lives in the knowledge feature).

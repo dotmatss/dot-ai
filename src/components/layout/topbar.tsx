@@ -7,7 +7,7 @@ import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { AppButton } from "@/components/ui/app-button";
 import { AppDropdownMenu } from "@/components/ui/app-dropdown-menu";
 import { AppInput } from "@/components/ui/app-input";
-import { workspaceNavigation } from "@/config/navigation";
+import { visibleNavigation } from "@/config/navigation";
 import { UserMenu } from "@/features/auth/components/user-menu";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { cn } from "@/lib/cn";
@@ -27,14 +27,16 @@ function QuickNav() {
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  // Reads the same filtered list as the sidebar. A palette over the unfiltered
+  // config would be the back door that makes hiding an item pointless.
   const matches = useMemo(() => {
     const q = term.trim().toLowerCase();
     if (!q) return [];
-    return workspaceNavigation
+    return visibleNavigation(membership.role)
       .flatMap((group) => group.items)
       .filter((item) => item.label.toLowerCase().includes(q))
       .slice(0, 6);
-  }, [term]);
+  }, [term, membership.role]);
 
   const open = focused && matches.length > 0;
   const activeOptionId = open ? `${listId}-option-${Math.min(activeIndex, matches.length - 1)}` : undefined;

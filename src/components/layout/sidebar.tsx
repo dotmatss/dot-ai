@@ -7,7 +7,7 @@ import { useEffect } from "react";
 
 import { AppButton } from "@/components/ui/app-button";
 import { AppTooltip } from "@/components/ui/app-tooltip";
-import { isNavItemActive, workspaceNavigation, type NavItem } from "@/config/navigation";
+import { isNavItemActive, visibleNavigation, type NavItem } from "@/config/navigation";
 import { WorkspaceSwitcher } from "@/features/workspaces/components/workspace-switcher";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { cn } from "@/lib/cn";
@@ -47,10 +47,10 @@ function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; onNavig
 
   return (
     <nav aria-label="Workspace" className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-3 scrollbar-thin">
-      {workspaceNavigation.map((group) => (
+      {visibleNavigation(membership.role).map((group) => (
         <div key={group.key} className="flex flex-col gap-0.5">
           {group.label && !collapsed ? (
-            <p className="mb-1 px-2.5 text-caption font-medium uppercase tracking-[0.08em] text-foreground-subtle">{group.label}</p>
+            <p className="mb-1 px-2.5 text-caption font-medium uppercase tracking-caption text-foreground-subtle">{group.label}</p>
           ) : null}
           {group.label && collapsed ? <div className="mx-2 my-1 h-px bg-border" aria-hidden /> : null}
           {group.items.map((item) => (

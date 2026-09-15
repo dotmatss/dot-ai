@@ -2,8 +2,8 @@ import type { NextRequest } from "next/server";
 
 import { runChatbotChat } from "@/features/chatbots/server/chatbot-chat";
 import { findChatbotById } from "@/features/chatbots/server/chatbot-repository";
-import { publicChatSchema } from "@/features/integrations/schemas";
-import { authenticateApiKey } from "@/features/integrations/server/api-key-auth";
+import { publicChatSchema } from "@/features/developer/schemas";
+import { authenticateApiKey } from "@/features/developer/server/api-key-auth";
 import { ApiError } from "@/lib/api/api-error";
 import { checkRateLimits } from "@/server/http/rate-limit";
 import { parseJsonBody } from "@/server/http/request";

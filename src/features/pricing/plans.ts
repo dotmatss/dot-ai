@@ -101,13 +101,14 @@ export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   messagesPerMonth: "Messages per month",
   tokensPerMonth: "Tokens per month",
   workflowRunsPerMonth: "Workflow runs per month",
+  storageBytes: "Storage",
 };
 
 /** Grouping for the comparison table, so it reads as a product, not a list. */
 export const ENTITLEMENT_GROUPS: ReadonlyArray<{ title: string; keys: EntitlementKey[] }> = [
   { title: "Build", keys: ["chatbots", "agents", "workflows", "collections", "knowledgeSources"] },
   { title: "Connect", keys: ["apiAccess", "integrations", "crmContacts", "members"] },
-  { title: "Usage", keys: ["messagesPerMonth", "tokensPerMonth", "workflowRunsPerMonth"] },
+  { title: "Usage", keys: ["messagesPerMonth", "tokensPerMonth", "workflowRunsPerMonth", "storageBytes"] },
 ];
 
 export function findPlan(id: string): Plan | undefined {

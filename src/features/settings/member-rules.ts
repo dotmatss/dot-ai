@@ -29,6 +29,10 @@ export const MEMBER_RULE_MESSAGES = {
   lastOwnerRole: "This organization must keep at least one owner. Promote someone else first.",
   lastOwnerRemove: "This organization must keep at least one owner. Promote someone else before removing this one.",
   lastOwnerSelf: "You are the last owner of this organization. Promote someone else before removing yourself.",
+  inviteManageRequired: "Only admins and owners can invite people.",
+  inviteOwnerRequired: "Only an owner can invite someone as an owner.",
+  inviteAlreadyMember: "That person is already a member of this organization.",
+  invitePending: "There is already a pending invitation for that address. Revoke it first to send a new one.",
 } as const;
 
 const ALLOWED: MemberActionDecision = { allowed: true };
@@ -98,6 +102,33 @@ export function canRemoveMember(input: {
       actor.userId === subject.userId ? MEMBER_RULE_MESSAGES.lastOwnerSelf : MEMBER_RULE_MESSAGES.lastOwnerRemove,
     );
   }
+  return ALLOWED;
+}
+
+/**
+ * May `actor` invite someone at `role`?
+ *
+ * The same two questions as any other membership change, minus a subject: the
+ * invitee has no row yet. Whether the address is already a member or already
+ * invited is a state check the service makes inside its transaction, not a rule
+ * that can be decided from a role.
+ */
+export function canInviteMember(input: { actor: MemberActor; role: MemberRole }): MemberActionDecision {
+  const { actor, role } = input;
+  if (!canManage(actor.role)) return deny(MEMBER_RULE_MESSAGES.inviteManageRequired);
+  if (role === "owner" && actor.role !== "owner") return deny(MEMBER_RULE_MESSAGES.inviteOwnerRequired);
+  return ALLOWED;
+}
+
+/**
+ * May `actor` revoke a pending invitation?
+ *
+ * An invitation carries a role but no person, so there is no "only an owner may
+ * touch an owner" case to make: withdrawing an offer never removes anyone's
+ * access. Managing members is the whole requirement.
+ */
+export function canRevokeInvitation(input: { actor: MemberActor }): MemberActionDecision {
+  if (!canManage(input.actor.role)) return deny(MEMBER_RULE_MESSAGES.inviteManageRequired);
   return ALLOWED;
 }
 

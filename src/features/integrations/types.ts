@@ -41,27 +41,46 @@ export interface IntegrationTestResult extends IntegrationTestOutcome {
   integration: Integration;
 }
 
-export interface ApiKey {
+/**
+ * Outbound credentials.
+ *
+ * The mirror image of `ApiKey` in `src/features/developer/types.ts`. The two
+ * live in different features precisely because they were easy to confuse while
+ * they sat in one:
+ *
+ *   ApiKey     - INBOUND. Authenticates somebody calling our public API as this
+ *                workspace. Stored as a hash; the plaintext is unrecoverable.
+ *   Credential - OUTBOUND. Authenticates us when a workflow calls somebody
+ *                else's API on this workspace's behalf. Encrypted, because it
+ *                has to be sent.
+ */
+export const CREDENTIAL_TYPES = ["bearer", "header", "basic"] as const;
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+
+/**
+ * A stored credential as every client sees it.
+ *
+ * There is no field here for the secret, and that is the type doing its job:
+ * nothing that decrypts is reachable from a route that returns this shape.
+ * `headerPreview` is the header NAME the credential will set, which is
+ * configuration rather than secret material - it is what lets the builder show
+ * "sets Authorization" without the value.
+ */
+export interface Credential {
   id: string;
   name: string;
-  /** Display-safe leading characters of the key; the rest is only ever hashed. */
-  keyPrefix: string;
+  type: CredentialType;
+  /** Header this credential sets on a request, e.g. "Authorization". */
+  headerPreview: string;
   createdAt: string;
+  updatedAt: string;
   createdByName: string | null;
   lastUsedAt: string | null;
-  revokedAt: string | null;
 }
 
-/** Returned exactly once, by the create endpoint. The plaintext is never stored. */
-export interface CreatedApiKey {
-  apiKey: ApiKey;
-  secret: string;
-}
-
-export type ApiKeyStatusFilter = "active" | "revoked";
-
-export interface ApiKeyListFilters {
-  status?: ApiKeyStatusFilter;
+export interface CredentialListFilters {
+  type?: CredentialType;
+  search?: string;
   page?: number;
   pageSize?: number;
 }

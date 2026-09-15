@@ -25,7 +25,7 @@ import {
   updateConversation,
 } from "@/features/conversations/server/conversation-service";
 import { isApiError } from "@/lib/api/api-error";
-import { getPool, query, queryOne } from "@/server/db/client";
+import { closePool, query, queryOne } from "@/server/db/client";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 const suffix = Math.random().toString(36).slice(2, 10);
@@ -169,7 +169,7 @@ describe.skipIf(!hasDatabase)("conversations inbox (PostgreSQL)", () => {
       await query("DELETE FROM organizations WHERE id = ANY($1::uuid[])", [[fixture.organizationId, fixture.otherOrganizationId]]);
       await query("DELETE FROM users WHERE id = ANY($1::uuid[])", [[fixture.ownerId, fixture.outsiderId]]);
     }
-    await getPool().end();
+    await closePool();
   });
 
   it("projects the joined chatbot, contact and assignee onto list rows", async () => {

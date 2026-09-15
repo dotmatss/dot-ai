@@ -1,22 +1,20 @@
-import type { ApiKeyListFilters, ApiKeyStatusFilter } from "@/features/integrations/types";
+import { CREDENTIAL_TYPES, type CredentialListFilters, type CredentialType } from "@/features/integrations/types";
 import { DEFAULT_PAGE_SIZE } from "@/types/pagination";
 
-const STATUSES: readonly ApiKeyStatusFilter[] = ["active", "revoked"];
-
-/**
- * Normalizes raw URL parameters into API key list filters. Shared by the server
- * page (for prefetching) and the client list so both derive identical query keys.
- */
-export function parseApiKeyFilters(values: Record<string, string | string[] | undefined>): ApiKeyListFilters {
+/** Same contract as `parseApiKeyFilters` in `src/features/developer/`, for the credentials list. */
+export function parseCredentialFilters(values: Record<string, string | string[] | undefined>): CredentialListFilters {
   const raw = (key: string) => {
     const value = values[key];
     return Array.isArray(value) ? value[0] : value;
   };
-  const statusValue = raw("status");
-  const status = statusValue && (STATUSES as readonly string[]).includes(statusValue) ? (statusValue as ApiKeyStatusFilter) : undefined;
+  const typeValue = raw("type");
+  const type =
+    typeValue && (CREDENTIAL_TYPES as readonly string[]).includes(typeValue) ? (typeValue as CredentialType) : undefined;
+  const search = raw("search")?.trim();
   const page = Number(raw("page") ?? 1);
   return {
-    status,
+    type,
+    search: search && search.length > 0 ? search.slice(0, 120) : undefined,
     page: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
     pageSize: DEFAULT_PAGE_SIZE,
   };

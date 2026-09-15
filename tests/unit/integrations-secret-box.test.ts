@@ -8,7 +8,6 @@ import {
   sealSecret,
   sealSecretMap,
   secretContext,
-  secretsMatch,
 } from "@/features/integrations/server/secret-box";
 
 const CONTEXT = secretContext("11111111-1111-1111-1111-111111111111", "webhook");
@@ -114,20 +113,5 @@ describe("sealSecretMap", () => {
     expect(() => openSecretMap({ ...sealed, ciphertext: flipFirstCharacter(sealed.ciphertext) }, CONTEXT)).toThrow(
       SecretDecryptionError,
     );
-  });
-});
-
-describe("secretsMatch", () => {
-  it("compares equal values", () => {
-    expect(secretsMatch("a".repeat(64), "a".repeat(64))).toBe(true);
-  });
-
-  it("rejects different values of the same length without throwing", () => {
-    expect(secretsMatch("a".repeat(64), `b${"a".repeat(63)}`)).toBe(false);
-  });
-
-  it("rejects different lengths instead of throwing", () => {
-    expect(secretsMatch("short", "much-longer-value")).toBe(false);
-    expect(secretsMatch("", "x")).toBe(false);
   });
 });

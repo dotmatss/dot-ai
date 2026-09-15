@@ -8,6 +8,7 @@ import { ConnectMcpServerButton } from "@/features/mcp/components/connect-mcp-se
 import { McpServersPanel } from "@/features/mcp/components/mcp-servers-panel";
 import { mcpKeys } from "@/features/mcp/queries";
 import { listMcpServers } from "@/features/mcp/server/mcp-service";
+import { canManage } from "@/features/workspaces/roles";
 import { HydrateClient } from "@/lib/query/hydrate";
 import { makeQueryClient } from "@/lib/query/query-client";
 import { requireWorkspaceAccess } from "@/server/auth/dal";
@@ -44,9 +45,13 @@ export default async function McpServersPage({ params }: PageProps<"/w/[workspac
           </AppText>
         </div>
         <div className="flex flex-wrap gap-2">
-          <AppButtonLink href={`/w/${workspaceSlug}/integrations/mcp/approvals` as Route} variant="secondary">
-            Tool approvals
-          </AppButtonLink>
+          {/* The approvals page is admin-floored, so offering the link to a
+              member or viewer would send them at a 403 they cannot act on. */}
+          {canManage(membership.role) ? (
+            <AppButtonLink href={`/w/${workspaceSlug}/integrations/mcp/approvals` as Route} variant="secondary">
+              Tool approvals
+            </AppButtonLink>
+          ) : null}
           <ConnectMcpServerButton />
         </div>
       </div>

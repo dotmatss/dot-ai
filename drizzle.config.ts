@@ -8,7 +8,7 @@ import { defineConfig } from "drizzle-kit";
  *
  * IMPORTANT: `out` is a STAGING directory, not the migrations directory.
  *
- * `npm run db:migrate` applies every `.sql` file in
+ * `pnpm db:migrate` applies every `.sql` file in
  * `src/server/db/migrations/` in lexical order. If drizzle-kit wrote there
  * directly, its generated baseline would be applied on the next deploy and
  * would try to recreate tables that already exist. So generated SQL lands in

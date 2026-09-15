@@ -1,3 +1,4 @@
+import { assertWorkspaceActive } from "@/server/auth/lifecycle";
 import "server-only";
 
 import { chunkText, estimateTokens, normalizeSourceText } from "@/features/knowledge/chunking";
@@ -172,6 +173,7 @@ export async function processSource(
   ctx: { workspaceId: string; sourceId: string },
   options: ProcessSourceOptions = {},
 ): Promise<KnowledgeSource> {
+  await assertWorkspaceActive(ctx.workspaceId);
   const source = await findSourceById(ctx.workspaceId, ctx.sourceId);
   if (!source) throw ApiError.notFound("Source not found");
 
@@ -230,6 +232,7 @@ export async function processCollection(
   ctx: { workspaceId: string; collectionId: string },
   options: ProcessSourceOptions = {},
 ): Promise<Collection> {
+  await assertWorkspaceActive(ctx.workspaceId);
   const sourceIds = await listSourceIds(ctx.workspaceId, ctx.collectionId);
   if (sourceIds.length > 0) {
     await markSourcesPending(ctx.workspaceId, ctx.collectionId);

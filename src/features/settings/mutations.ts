@@ -2,8 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { settingsApi, type SessionRevocationScope } from "@/features/settings/api";
 import { settingsKeys } from "@/features/settings/queries";
-import type { UpdateProfileInput, UpdateWorkspaceNameInput } from "@/features/settings/schemas";
-import type { MembersOverview, UserProfile } from "@/features/settings/types";
+import type { InviteMemberInput, UpdateProfileInput, UpdateWorkspaceNameInput } from "@/features/settings/schemas";
+import type { InvitationCreated, MembersOverview, UserProfile } from "@/features/settings/types";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { MEMBER_ROLE_LABELS, type MemberRole } from "@/features/workspaces/roles";
 import { isApiError } from "@/lib/api/api-error";
@@ -62,6 +62,45 @@ export function useRemoveMemberMutation() {
     },
     onError: (error) =>
       toast.error({ title: "Could not remove the member", description: errorMessage(error, "Please try again.") }),
+  });
+}
+
+/**
+ * Inviting returns the whole overview *and* the one-time link. The cache takes
+ * the overview; the link stays in `mutation.data` for the panel to show, and is
+ * gone as soon as that component unmounts - which is the truth about it.
+ */
+export function useInviteMemberMutation() {
+  const queryClient = useQueryClient();
+  const { membership } = useWorkspace();
+  const slug = membership.workspace.slug;
+  return useMutation({
+    mutationFn: (input: InviteMemberInput) => settingsApi.inviteMember(slug, input),
+    onSuccess: (result: InvitationCreated) => {
+      queryClient.setQueryData(settingsKeys.members(slug), result.overview);
+      toast.success({
+        title: "Invitation created",
+        description: `Copy the link and send it to ${result.invitation.email}.`,
+      });
+    },
+    onError: (error) =>
+      toast.error({ title: "Could not create the invitation", description: errorMessage(error, "Please try again.") }),
+  });
+}
+
+export function useRevokeInvitationMutation() {
+  const queryClient = useQueryClient();
+  const { membership } = useWorkspace();
+  const slug = membership.workspace.slug;
+  return useMutation({
+    mutationFn: ({ invitationId }: { invitationId: string; email: string }) =>
+      settingsApi.revokeInvitation(slug, invitationId),
+    onSuccess: (overview: MembersOverview, variables) => {
+      queryClient.setQueryData(settingsKeys.members(slug), overview);
+      toast.success({ title: "Invitation revoked", description: `The link sent to ${variables.email} no longer works.` });
+    },
+    onError: (error) =>
+      toast.error({ title: "Could not revoke the invitation", description: errorMessage(error, "Please try again.") }),
   });
 }
 

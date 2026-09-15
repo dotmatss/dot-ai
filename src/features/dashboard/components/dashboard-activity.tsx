@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 
 import { AppEmptyState } from "@/components/feedback/app-empty-state";
 import { AppCard, AppCardContent, AppCardDescription, AppCardHeader, AppCardTitle } from "@/components/ui/app-card";
-import { getRecentActivity } from "@/features/dashboard/server/dashboard-service";
+// The activity log belongs to the audit feature, which owns the table and its
+// read models; this card is one of its two consumers.
+import { listRecentActivity } from "@/features/audit/server/audit-service";
 import { formatRelativeTime } from "@/lib/format/date";
 
 const ICONS: Record<string, ReactNode> = {
@@ -19,7 +21,7 @@ const ICONS: Record<string, ReactNode> = {
 };
 
 export async function DashboardActivity({ workspaceId }: { workspaceId: string }) {
-  const entries = await getRecentActivity(workspaceId, 8);
+  const entries = await listRecentActivity(workspaceId, 8);
   return (
     <AppCard className="flex flex-col">
       <AppCardHeader>

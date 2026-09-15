@@ -1,8 +1,13 @@
 import { z } from "zod";
 
-import { playgroundChatSchema } from "@/features/chatbots/schemas";
+import { CREDENTIAL_RESERVED_HEADERS, CREDENTIAL_TYPE_META } from "@/features/integrations/constants";
 import { INTEGRATIONS } from "@/features/integrations/registry";
-import { INTEGRATION_PROVIDERS, type IntegrationProvider } from "@/features/integrations/types";
+import {
+  CREDENTIAL_TYPES,
+  INTEGRATION_PROVIDERS,
+  type CredentialType,
+  type IntegrationProvider,
+} from "@/features/integrations/types";
 
 export const integrationProviderSchema = z.enum(INTEGRATION_PROVIDERS);
 
@@ -66,28 +71,103 @@ export function fieldErrorsFrom(error: z.ZodError): Record<string, string[]> {
   return details;
 }
 
-export const createApiKeySchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(2, { error: "Name the key so you can recognise it later" })
-    .max(60, { error: "Keep the name under 60 characters" }),
-});
+/* -------------------------------------------------------------------------- */
+/* Outbound credentials                                                        */
+/* -------------------------------------------------------------------------- */
 
-export type CreateApiKeyInput = z.infer<typeof createApiKeySchema>;
+export const credentialTypeSchema = z.enum(CREDENTIAL_TYPES);
 
-export const apiKeyListQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  status: z.enum(["active", "revoked"]).optional(),
-});
+/** RFC 7230 token characters. A header name outside this set is not a header name. */
+const HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+export const credentialNameSchema = z
+  .string()
+  .trim()
+  .min(2, { error: "Name the credential so you can recognise it later" })
+  .max(60, { error: "Keep the name under 60 characters" });
+
+const customHeaderNameSchema = z
+  .string()
+  .trim()
+  .min(1, { error: "Enter the header name" })
+  .max(100, { error: "Keep the header name under 100 characters" })
+  .regex(HEADER_NAME_PATTERN, { error: "A header name may only contain letters, digits and !#$%&'*+-.^_`|~" })
+  .refine((value) => !CREDENTIAL_RESERVED_HEADERS.includes(value.toLowerCase()), {
+    error: "That header is set by the request itself and cannot be overridden",
+  });
+
+const secretValueSchema = z.string().max(4000, { error: "That value is too long" });
 
 /**
- * Body of the public, API-key authenticated chat endpoint. Built on the
- * playground schema so third-party callers and the widget share one contract.
+ * Wire shape for creating a credential. Loose in the same places and for the
+ * same reason as `connectIntegrationSchema`: `secrets` cannot be validated
+ * until `type` is known, so `credentialSchemaFor()` below does the real work
+ * once it is - on the server for the body, on the client for the form.
  */
-export const publicChatSchema = playgroundChatSchema.extend({
-  chatbotId: z.uuid({ error: "chatbotId must be a chatbot UUID" }),
+export const createCredentialSchema = z.object({
+  name: credentialNameSchema,
+  type: credentialTypeSchema,
+  headerName: z.string().trim().max(100).default(""),
+  secrets: z.record(z.string(), secretValueSchema).default({}),
 });
 
-export type PublicChatInput = z.infer<typeof publicChatSchema>;
+export type CreateCredentialInput = z.input<typeof createCredentialSchema>;
+
+/**
+ * Editing an existing credential.
+ *
+ * `type` is absent deliberately: it decides which secret fields the envelope
+ * holds, so changing it would silently orphan them. Switching kinds is deleting
+ * one credential and creating another, which is also the honest description of
+ * what it does to anything referencing it.
+ */
+export const updateCredentialSchema = z.object({
+  name: credentialNameSchema.optional(),
+  headerName: z.string().trim().max(100).optional(),
+  /** Only fields present here are replaced; omitted fields keep their stored value. */
+  secrets: z.record(z.string(), secretValueSchema).default({}),
+});
+
+export type UpdateCredentialInput = z.input<typeof updateCredentialSchema>;
+
+export interface CredentialFormValues {
+  name: string;
+  type: CredentialType;
+  headerName: string;
+  secrets: Record<string, string>;
+}
+
+/**
+ * Per-kind validation.
+ *
+ * `secretsRequired` is false when editing something already stored: a blank
+ * field then means "keep the stored value", which is how Replace works without
+ * ever sending the current secret to the browser.
+ */
+export function credentialSchemaFor(type: CredentialType, options: { secretsRequired: boolean }) {
+  const meta = CREDENTIAL_TYPE_META[type];
+  // Typed as a string schema either way, so the parsed `secrets` is
+  // `Record<string, string>` in both branches and the form, the route and the
+  // service all agree on one shape. Blank is the "keep what is stored" signal.
+  const secretShape: Record<string, z.ZodString | z.ZodDefault<z.ZodString>> = {};
+  for (const field of meta.secretFields) {
+    secretShape[field.key] = options.secretsRequired
+      ? secretValueSchema.trim().min(1, { error: `Enter the ${field.label.toLowerCase()}` })
+      : secretValueSchema.trim().default("");
+  }
+  return z.object({
+    name: credentialNameSchema,
+    // Only the custom-header kind has a header name to give; for the others the
+    // scheme decides it, and whatever arrives is ignored rather than stored -
+    // accepting one would create a second source of truth.
+    headerName: meta.header === null ? customHeaderNameSchema : z.string().trim().max(100).default(""),
+    secrets: z.object(secretShape),
+  });
+}
+
+export const credentialListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  type: credentialTypeSchema.optional(),
+  search: z.string().trim().max(120).optional(),
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, FlaskConical, MoreHorizontal, Trash2 } from "lucide-react";
+import { Bot, Cpu, FlaskConical, MoreHorizontal, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppEmptyState } from "@/components/feedback/app-empty-state";
 import { AppErrorState } from "@/components/feedback/app-error-state";
 import { AppListSkeleton } from "@/components/feedback/app-loading";
+import { AppBadge } from "@/components/ui/app-badge";
 import { AppButton } from "@/components/ui/app-button";
 import { AppChip } from "@/components/ui/app-chip";
 import { AppConfirmDialog } from "@/components/ui/app-dialog";
@@ -60,10 +61,21 @@ function ChatbotRow({ chatbot, onDelete }: { chatbot: ChatbotSummary; onDelete?:
         </Link>
       </AppTableCell>
       <AppTableCell>
-        <ChatbotStatusBadge status={chatbot.status} />
+        <span className="flex flex-wrap items-center gap-1.5">
+          <ChatbotStatusBadge status={chatbot.status} />
+          {chatbot.agentName ? (
+            <AppBadge tone="info" size="sm" icon={<Cpu aria-hidden />}>
+              {chatbot.agentName}
+            </AppBadge>
+          ) : null}
+        </span>
       </AppTableCell>
       <AppTableCell className="tabular-nums">{chatbot.conversationCount}</AppTableCell>
-      <AppTableCell className="tabular-nums">{chatbot.collectionCount}</AppTableCell>
+      {/* An agent-backed chatbot retrieves from the agent's collections, so its
+          own count would be a number nothing reads. */}
+      <AppTableCell className="tabular-nums">
+        {chatbot.agentId ? <span className="text-foreground-subtle">—</span> : chatbot.collectionCount}
+      </AppTableCell>
       <AppTableCell className="whitespace-nowrap text-foreground-muted">
         <AppRelativeTime value={chatbot.updatedAt} />
       </AppTableCell>

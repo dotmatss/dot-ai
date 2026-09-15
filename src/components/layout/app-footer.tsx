@@ -62,7 +62,7 @@ export function AppFooter() {
 
           {GROUPS.map((group) => (
             <nav key={group.title} aria-label={group.title}>
-              <h2 className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">{group.title}</h2>
+              <h2 className="text-caption font-medium uppercase tracking-caption text-foreground-muted">{group.title}</h2>
               <ul className="mt-4 flex flex-col gap-2.5">
                 {group.links.map((link) => (
                   <li key={link.href + link.label}>

@@ -1,7 +1,8 @@
+import { assertWorkspaceActive } from "@/server/auth/lifecycle";
 import "server-only";
 
 import type { PlaygroundChatInput } from "@/features/chatbots/schemas";
-import { buildChatbotSystemPrompt } from "@/features/chatbots/server/prompt";
+import { resolveChatbotRuntime } from "@/features/chatbots/server/chatbot-runtime";
 import type { Chatbot } from "@/features/chatbots/types";
 import {
   appendMessage,
@@ -29,14 +30,22 @@ interface RunChatbotChatOptions {
 /**
  * Executes one chatbot turn end-to-end and returns an SSE response:
  * persist the user message, retrieve knowledge, stream the model, persist the
- * assistant reply and record usage. Shared by the authenticated playground and
- * the public widget endpoint, which differ only in how they authorize.
+ * assistant reply and record usage. Shared by the authenticated playground, the
+ * public widget and the public API, which differ only in how they authorize.
+ *
+ * Which AI configuration this runs on - the chatbot's own, or that of an agent
+ * it deploys - is decided once by `resolveChatbotRuntime`. Doing it here rather
+ * than in each route is what keeps the three channels from ever disagreeing
+ * about what a given chatbot is.
  */
 export async function runChatbotChat(options: RunChatbotChatOptions): Promise<Response> {
   const { chatbot, input, channel, signal } = options;
   const workspaceId = chatbot.workspaceId;
+  await assertWorkspaceActive(workspaceId);
   const lastUser = [...input.messages].reverse().find((m) => m.role === "user");
   if (!lastUser) throw ApiError.badRequest("A user message is required");
+
+  const runtime = await resolveChatbotRuntime(chatbot);
 
   let conversationId = input.conversationId ?? null;
   if (conversationId) {
@@ -46,6 +55,10 @@ export async function runChatbotChat(options: RunChatbotChatOptions): Promise<Re
     const created = await createConversation({
       workspaceId,
       chatbotId: chatbot.id,
+      // The channel AND the worker: a conversation records the chatbot it
+      // arrived through and, when one is backing it, the agent that answered.
+      // Null for a standalone chatbot, which is what every legacy row has.
+      agentId: runtime.agentId,
       contactId: options.contactId ?? null,
       channel,
       title: deriveConversationTitle(lastUser.content),
@@ -55,22 +68,28 @@ export async function runChatbotChat(options: RunChatbotChatOptions): Promise<Re
 
   await appendMessage({ workspaceId, conversationId, role: "user", content: lastUser.content });
 
-  const sources = await retrieveKnowledge(workspaceId, chatbot.collectionIds, lastUser.content).catch(() => [] as RetrievedSource[]);
+  const sources = await retrieveKnowledge(workspaceId, runtime.collectionIds, lastUser.content).catch(() => [] as RetrievedSource[]);
 
   const messages: ChatMessage[] = [
-    { role: "system", content: buildChatbotSystemPrompt(chatbot) },
+    { role: "system", content: runtime.systemPrompt },
     ...input.messages.map((m) => ({ role: m.role, content: m.content })),
   ];
 
   const gateway = getAiGateway();
   const events = gateway.streamChat({
-    model: chatbot.modelConfig.model ?? undefined,
+    model: runtime.modelConfig.model ?? undefined,
     messages,
-    temperature: chatbot.modelConfig.temperature,
-    maxTokens: chatbot.modelConfig.maxTokens,
+    temperature: runtime.modelConfig.temperature,
+    maxTokens: runtime.modelConfig.maxTokens,
     sources,
     signal,
-    metadata: { workspaceId, chatbotId: chatbot.id, channel, ...options.metadata },
+    metadata: {
+      workspaceId,
+      chatbotId: chatbot.id,
+      channel,
+      ...(runtime.agentId ? { agentId: runtime.agentId } : {}),
+      ...options.metadata,
+    },
   });
 
   let assistantText = "";

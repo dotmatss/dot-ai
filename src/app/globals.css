@@ -1,6 +1,28 @@
 @import "tailwindcss";
 
 /*
+ * Plugins
+ * -------------------------------------------------------------------------
+ * `typography` supplies `prose` for long-form rich text - documentation, legal
+ * copy, anything rendered from markup the app does not author class by class.
+ * Its colors are bound to the design tokens further down, so `prose` is
+ * monochrome and follows the theme without `prose-invert`.
+ *
+ * `forms` is registered with the CLASS strategy on purpose. The default `base`
+ * strategy restyles every input, select, textarea, checkbox and radio in the
+ * document, which would fight the primitives in `src/components/ui`: those
+ * already normalise the same elements with `appearance-none` and token colors,
+ * and the plugin's blue focus ring and background images would win in places.
+ * With `class`, the reset is opt-in through `form-input`, `form-select`,
+ * `form-checkbox` and friends, for a control rendered outside a primitive.
+ */
+@plugin "@tailwindcss/typography";
+
+@plugin "@tailwindcss/forms" {
+  strategy: class;
+}
+
+/*
  * Design tokens
  * -------------------------------------------------------------------------
  * The visual language is monochrome: a single ink scale carries hierarchy,
@@ -21,6 +43,10 @@
   --text-sm--line-height: 1.25rem;
   --text-base: 1rem;
   --text-base--line-height: 1.5rem;
+  /* Long-form reading size, one step above body: documentation and legal
+     prose, where 14px is too tight for a full measure and 16px is too loose. */
+  --text-reading: 0.9375rem;
+  --text-reading--line-height: 1.75rem;
   --text-lg: 1.125rem;
   --text-lg--line-height: 1.75rem;
   --text-xl: 1.25rem;
@@ -29,6 +55,12 @@
   --text-2xl--line-height: 2rem;
   --text-3xl: 2rem;
   --text-3xl--line-height: 2.5rem;
+
+  /* Tracking for the uppercase caption/overline treatment. Uppercase text
+     needs the extra letter-spacing to stay readable; it is one value, used in
+     one place conceptually, so it is a token rather than 16 copies of
+     `tracking-[0.08em]`. */
+  --tracking-caption: 0.08em;
 
   /* Ink scale (monochrome palette) */
   --color-ink-950: #0a0a0a;
@@ -246,6 +278,168 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/*
+ * Typography plugin, bound to the design tokens
+ * -------------------------------------------------------------------------
+ * `prose` ships its own gray scale. Left alone it would introduce a second
+ * palette into a deliberately monochrome app and would stay light when the
+ * theme goes dark. Pointing every `--tw-prose-*` variable at a semantic token
+ * fixes both at once: the tokens already flip under `.dark`, so `prose` does
+ * too, and `prose-invert` is unnecessary - the `invert` variables are pointed
+ * at the same tokens so that a stray `dark:prose-invert` is a harmless no-op
+ * rather than a second, contradicting theme.
+ *
+ * Code colors match `AppCodeBlock` and `AppInlineCode`: fixed ink either way,
+ * because a code block reads as a dark panel in both themes.
+ *
+ * Written outside `@layer` on purpose - unlayered rules outrank the plugin's
+ * layered utilities, so these win without an `!important` or a specificity
+ * contest.
+ */
+.prose {
+  --tw-prose-body: var(--color-foreground-secondary);
+  --tw-prose-headings: var(--color-foreground);
+  --tw-prose-lead: var(--color-foreground-muted);
+  --tw-prose-links: var(--color-foreground);
+  --tw-prose-bold: var(--color-foreground);
+  --tw-prose-counters: var(--color-foreground-subtle);
+  --tw-prose-bullets: var(--color-border-strong);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-quotes: var(--color-foreground);
+  --tw-prose-quote-borders: var(--color-border-strong);
+  --tw-prose-captions: var(--color-foreground-muted);
+  --tw-prose-kbd: var(--color-foreground);
+  --tw-prose-kbd-shadows: 17 17 17;
+  --tw-prose-code: var(--color-foreground);
+  --tw-prose-pre-code: var(--color-ink-100);
+  --tw-prose-pre-bg: var(--color-ink-900);
+  --tw-prose-th-borders: var(--color-border-strong);
+  --tw-prose-td-borders: var(--color-border);
+
+  --tw-prose-invert-body: var(--color-foreground-secondary);
+  --tw-prose-invert-headings: var(--color-foreground);
+  --tw-prose-invert-lead: var(--color-foreground-muted);
+  --tw-prose-invert-links: var(--color-foreground);
+  --tw-prose-invert-bold: var(--color-foreground);
+  --tw-prose-invert-counters: var(--color-foreground-subtle);
+  --tw-prose-invert-bullets: var(--color-border-strong);
+  --tw-prose-invert-hr: var(--color-border);
+  --tw-prose-invert-quotes: var(--color-foreground);
+  --tw-prose-invert-quote-borders: var(--color-border-strong);
+  --tw-prose-invert-captions: var(--color-foreground-muted);
+  --tw-prose-invert-kbd: var(--color-foreground);
+  --tw-prose-invert-kbd-shadows: 245 245 245;
+  --tw-prose-invert-code: var(--color-foreground);
+  --tw-prose-invert-pre-code: var(--color-ink-100);
+  --tw-prose-invert-pre-bg: var(--color-ink-900);
+  --tw-prose-invert-th-borders: var(--color-border-strong);
+  --tw-prose-invert-td-borders: var(--color-border);
+}
+
+.dark .prose {
+  --tw-prose-kbd-shadows: 245 245 245;
+}
+
+/* Headings elsewhere in the app are `tracking-tight`; match them, and drop the
+   plugin's quote marks around inline code, which the app does not use. */
+.prose :is(h1, h2, h3, h4) {
+  letter-spacing: -0.015em;
+}
+
+.prose :where(code):not(:where([class~="not-prose"] *))::before,
+.prose :where(code):not(:where([class~="not-prose"] *))::after {
+  content: none;
+}
+
+/* Inline code, matching `AppInlineCode`. */
+.prose :where(code):not(:where(pre code, [class~="not-prose"] *)) {
+  border-radius: var(--radius-xs);
+  background-color: var(--color-surface-muted);
+  padding: 0.125rem 0.375rem;
+  font-weight: 400;
+  font-size: 0.85em;
+}
+
+/*
+ * Forms plugin, bound to the design tokens
+ * -------------------------------------------------------------------------
+ * The plugin's own colors are Tailwind's stock blue-600 and gray-500 on white,
+ * with a square corner and a `:focus` box-shadow ring. All four are wrong here:
+ * the palette is monochrome, the theme flips, corners are `--radius-md`, and
+ * focus is an outline on `:focus-visible` so a mouse click does not draw a ring.
+ * These rules restate exactly those decisions, so `form-input` and friends land
+ * on-brand the moment someone reaches for them.
+ *
+ * Unlayered on purpose, like the `prose` block above: the plugin's utilities
+ * live in `@layer utilities`, so these win without `!important`.
+ */
+.form-input,
+.form-textarea,
+.form-select,
+.form-multiselect,
+.form-checkbox,
+.form-radio {
+  border-color: var(--color-border-strong);
+  background-color: var(--color-surface);
+  color: var(--color-foreground);
+  border-radius: var(--radius-md);
+}
+
+.form-input,
+.form-textarea,
+.form-select,
+.form-multiselect {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
+/* `color` is what the plugin paints a checked box with, so it carries accent. */
+.form-checkbox,
+.form-radio {
+  color: var(--color-accent);
+}
+
+.form-checkbox {
+  border-radius: var(--radius-xs);
+}
+
+.form-radio {
+  border-radius: 100%;
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus,
+.form-multiselect:focus,
+.form-checkbox:focus,
+.form-radio:focus {
+  border-color: var(--color-foreground);
+  box-shadow: none;
+  outline: none;
+}
+
+.form-input:focus-visible,
+.form-textarea:focus-visible,
+.form-select:focus-visible,
+.form-multiselect:focus-visible,
+.form-checkbox:focus-visible,
+.form-radio:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.form-input:disabled,
+.form-textarea:disabled,
+.form-select:disabled,
+.form-multiselect:disabled,
+.form-checkbox:disabled,
+.form-radio:disabled {
+  cursor: not-allowed;
+  background-color: var(--color-surface-muted);
+  border-color: var(--color-border);
+  color: var(--color-foreground-subtle);
 }
 
 @utility scrollbar-thin {

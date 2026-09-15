@@ -1,5 +1,12 @@
 import type { CreateAgentInput, UpdateAgentInput } from "@/features/agents/schemas";
-import type { Agent, AgentKnowledgeOption, AgentListFilters, AgentOverview, AgentSummary } from "@/features/agents/types";
+import type {
+  Agent,
+  AgentKnowledgeOption,
+  AgentListFilters,
+  AgentOverview,
+  AgentSummary,
+  DelegationCandidate,
+} from "@/features/agents/types";
 import { apiFetch, buildQueryString } from "@/lib/api/http";
 import type { Paginated } from "@/types/pagination";
 
@@ -16,6 +23,8 @@ export const agentsApi = {
   remove: (workspaceSlug: string, agentId: string) => apiFetch<void>(`${base(workspaceSlug)}/${agentId}`, { method: "DELETE" }),
   knowledgeOptions: (workspaceSlug: string, agentId: string) =>
     apiFetch<AgentKnowledgeOption[]>(`${base(workspaceSlug)}/${agentId}/knowledge`),
+  delegationCandidates: (workspaceSlug: string, agentId: string) =>
+    apiFetch<DelegationCandidate[]>(`${base(workspaceSlug)}/${agentId}/delegates`),
   overview: (workspaceSlug: string, agentId: string) => apiFetch<AgentOverview>(`${base(workspaceSlug)}/${agentId}/overview`),
   chatUrl: (workspaceSlug: string, agentId: string) => `${base(workspaceSlug)}/${agentId}/chat`,
 };

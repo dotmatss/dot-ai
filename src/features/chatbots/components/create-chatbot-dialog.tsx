@@ -78,6 +78,7 @@ export function CreateChatbotButton() {
         onClose={() => setOpen(false)}
         title="Create chatbot"
         description="Give your chatbot a name. You can configure instructions, knowledge and appearance next."
+        size="lg"
         dismissible={!mutation.isPending}
         footer={
           <>

@@ -84,7 +84,7 @@ export const DEPLOY_PAGES: DocPage[] = [
       {
         type: "steps",
         items: [
-          { title: "Open the developer area", body: "Integrations → API keys, in the workspace the key should belong to." },
+          { title: "Open the developer area", body: "Developer → API keys, in the workspace the key should belong to." },
           { title: "Create and name it", body: "Name it after the system that will use it, so revoking later is obvious." },
           { title: "Copy it once", body: "The full key is shown exactly once. Afterwards only a short prefix is stored for identification." },
           { title: "Store it as a secret", body: "Put it in your server's secret store or environment. Never in client code or a repository." },

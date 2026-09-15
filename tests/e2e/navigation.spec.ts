@@ -16,6 +16,7 @@ const SECTIONS = [
   "knowledge",
   "conversations",
   "crm",
+  "intelligence",
   "integrations",
   "analytics",
   "settings",
@@ -54,7 +55,19 @@ test("the sidebar links to every section and marks the current one", async ({ pa
   await page.goto(`/w/${workspaceSlug}/chatbots`);
 
   const nav = page.getByRole("navigation", { name: "Workspace" });
-  for (const label of ["Dashboard", "Chatbots", "Agents", "Workflows", "Knowledge", "Conversations", "CRM", "Integrations", "Analytics", "Settings"]) {
+  for (const label of [
+    "Dashboard",
+    "Chatbots",
+    "Agents",
+    "Workflows",
+    "Knowledge",
+    "Conversations",
+    "CRM",
+    "Intelligence",
+    "Integrations",
+    "Analytics",
+    "Settings",
+  ]) {
     await expect(nav.getByRole("link", { name: label })).toBeVisible();
   }
 

@@ -1,3 +1,14 @@
+/**
+ * The four protection codes are separate values rather than one `rate_limited`
+ * because they call for four different actions. "Retry in 30s" is correct for a
+ * rate limit and actively misleading for an exhausted monthly quota, where the
+ * answer is to upgrade or wait for the period to roll; "too many at once" is
+ * fixed by reducing parallelism, not by slowing down. A client that cannot tell
+ * them apart can only guess, and usually guesses "retry harder".
+ *
+ * They are additive: `codeFromStatus` already degrades an unrecognised code to
+ * the status-derived one, so a client built against the older list keeps working.
+ */
 export type ApiErrorCode =
   | "bad_request"
   | "validation_error"
@@ -6,6 +17,10 @@ export type ApiErrorCode =
   | "not_found"
   | "conflict"
   | "rate_limited"
+  | "quota_exceeded"
+  | "concurrency_limit"
+  | "not_entitled"
+  | "suspended"
   | "unavailable"
   | "internal_error";
 
@@ -25,6 +40,10 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   not_found: 404,
   conflict: 409,
   rate_limited: 429,
+  quota_exceeded: 429,
+  concurrency_limit: 429,
+  not_entitled: 403,
+  suspended: 403,
   unavailable: 503,
   internal_error: 500,
 };
@@ -38,13 +57,26 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly status: number;
   readonly details?: ApiErrorDetails;
+  /**
+   * Retry guidance, emitted as the `Retry-After` header by `fail()`.
+   *
+   * Carried on the error rather than passed to the response helper so that any
+   * error thrown anywhere reaches `toErrorResponse` with its guidance intact -
+   * a service deep in a call stack has no access to the response builder.
+   *
+   * Deliberately NOT in the payload: it is transport guidance, the message
+   * already states it in words, and a number in the body would be one more
+   * thing for a client to parse and get wrong.
+   */
+  readonly retryAfterSeconds?: number;
 
-  constructor(code: ApiErrorCode, message: string, details?: ApiErrorDetails) {
+  constructor(code: ApiErrorCode, message: string, details?: ApiErrorDetails, retryAfterSeconds?: number) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = STATUS_BY_CODE[code];
     this.details = details;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 
   toPayload(): ApiErrorPayload {
@@ -77,11 +109,28 @@ export class ApiError extends Error {
   static conflict(message = "Conflict") {
     return new ApiError("conflict", message);
   }
-  static rateLimited(message = "Too many requests") {
-    return new ApiError("rate_limited", message);
+  static rateLimited(message = "Too many requests", retryAfterSeconds?: number) {
+    return new ApiError("rate_limited", message, undefined, retryAfterSeconds);
   }
-  static unavailable(message = "Service temporarily unavailable") {
-    return new ApiError("unavailable", message);
+  /**
+   * The period's allowance is spent. No `Retry-After` by default: the honest
+   * answer is "when your billing period rolls", and a header promising a
+   * retry in seconds would invite exactly the hammering it should prevent.
+   */
+  static quotaExceeded(message = "This workspace has used its allowance for the current period") {
+    return new ApiError("quota_exceeded", message);
+  }
+  static concurrencyLimit(message = "Too many operations running at once. Wait for one to finish.", retryAfterSeconds?: number) {
+    return new ApiError("concurrency_limit", message, undefined, retryAfterSeconds);
+  }
+  static notEntitled(message = "This plan does not include that capability") {
+    return new ApiError("not_entitled", message);
+  }
+  static suspended(message = "This account is suspended") {
+    return new ApiError("suspended", message);
+  }
+  static unavailable(message = "Service temporarily unavailable", retryAfterSeconds?: number) {
+    return new ApiError("unavailable", message, undefined, retryAfterSeconds);
   }
   static internal(message = "Something went wrong") {
     return new ApiError("internal_error", message);
@@ -131,6 +180,14 @@ function defaultMessageForCode(code: ApiErrorCode): string {
       return "Not found";
     case "rate_limited":
       return "Too many requests";
+    case "quota_exceeded":
+      return "This workspace has used its allowance for the current period";
+    case "concurrency_limit":
+      return "Too many operations running at once";
+    case "not_entitled":
+      return "This plan does not include that capability";
+    case "suspended":
+      return "This account is suspended";
     case "unavailable":
       return "Service temporarily unavailable";
     default:

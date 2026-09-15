@@ -47,7 +47,7 @@ export function LegalPage({ document }: { document: LegalDocument }) {
 
       {headings.length > 2 ? (
         <nav aria-label={`${document.title} contents`} className="mt-8 rounded-lg border border-border bg-surface-muted p-4">
-          <h2 className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">On this page</h2>
+          <h2 className="text-caption font-medium uppercase tracking-caption text-foreground-muted">On this page</h2>
           <ul className="mt-2.5 flex flex-col gap-1.5 sm:columns-2">
             {headings.map((heading) => (
               <li key={heading.id}>
@@ -104,7 +104,7 @@ export function LegalPage({ document }: { document: LegalDocument }) {
           <ul className="mt-5 flex flex-col gap-5">
             {notes.map((note) => (
               <li key={note.question} className="flex flex-col gap-1.5">
-                <span className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-subtle">
+                <span className="text-caption font-medium uppercase tracking-caption text-foreground-subtle">
                   {REVIEW_AREA_LABELS[note.area]}
                 </span>
                 <p className="text-sm leading-6 text-foreground">

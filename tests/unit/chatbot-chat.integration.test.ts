@@ -6,7 +6,7 @@
  *
  * Skipped automatically when DATABASE_URL is not configured, so the suite still
  * runs on a machine without a database:
- *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" npx vitest run chatbot-chat
+ *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" pnpm exec vitest run chatbot-chat
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -15,7 +15,7 @@ import { findChatbotById } from "@/features/chatbots/server/chatbot-repository";
 import type { Chatbot } from "@/features/chatbots/types";
 import { readChatStream } from "@/lib/ai/sse-client";
 import { isApiError } from "@/lib/api/api-error";
-import { getPool, query, queryOne } from "@/server/db/client";
+import { closePool, query, queryOne } from "@/server/db/client";
 import type { ChatStreamEvent } from "@/types/ai";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
@@ -98,7 +98,7 @@ describe.skipIf(!hasDatabase)("chatbot chat pipeline (PostgreSQL)", () => {
       await query("DELETE FROM organizations WHERE id = $1", [fixture.organizationId]);
       await query("DELETE FROM users WHERE id = $1", [fixture.userId]);
     }
-    await getPool().end();
+    await closePool();
   });
 
   it("persists both turns, cites nothing without knowledge, and meters usage", async () => {

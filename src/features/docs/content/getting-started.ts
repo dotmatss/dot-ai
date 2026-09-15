@@ -95,7 +95,7 @@ export const GETTING_STARTED_PAGES: DocPage[] = [
         head: ["Role", "Can do"],
         rows: [
           ["Owner", "Everything, including deleting the workspace and managing billing when it exists."],
-          ["Admin", "Manage members, integrations, API keys, and delete resources."],
+          ["Admin", "Manage members, integrations, credentials, API keys, and delete resources."],
           ["Member", "Create and edit chatbots, agents, workflows, knowledge and CRM records."],
           ["Viewer", "Read dashboards, conversations and records. No writes, and no playground runs."],
         ],

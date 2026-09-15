@@ -1,0 +1,8 @@
+# pnpm blocks dependency build scripts by default. These three need theirs:
+# esbuild downloads its native binary (vitest, drizzle-kit), unrs-resolver builds
+# the native resolver behind the ESLint import plugin, and workerd extracts the
+# Cloudflare Workers runtime binary that wrangler and vinext build on.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+  workerd: true

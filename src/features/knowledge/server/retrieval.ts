@@ -30,6 +30,13 @@ import type { RetrievedSource } from "@/types/ai";
  * The vector store plugs in behind this same signature: callers (the chatbot
  * chat pipeline, agents, the knowledge test panel) never depend on how
  * retrieval is implemented.
+ *
+ * This statement stays hand-written SQL, and it is the clearest case in the
+ * codebase: `plainto_tsquery`, rewriting the parsed `tsquery`, `ts_rank_cd`,
+ * `ts_headline`, the `@@` match operator and the CROSS JOIN onto a CTE are the
+ * query. There is nothing here a builder could express, and nothing incidental
+ * left for it to hold. Recorded as a classified exception in
+ * `docs/drizzle-orm-migration-plan.md`.
  */
 
 const HEADLINE_OPTIONS = "MaxWords=60, MinWords=25, StartSel=, StopSel=, MaxFragments=1";

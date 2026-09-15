@@ -1,8 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { apiKeysApi, integrationsApi } from "@/features/integrations/api";
+import { credentialsApi, integrationsApi } from "@/features/integrations/api";
 import { integrationKeys } from "@/features/integrations/queries";
-import type { ConnectIntegrationInput, CreateApiKeyInput } from "@/features/integrations/schemas";
+import type {
+  ConnectIntegrationInput,
+  CreateCredentialInput,
+  UpdateCredentialInput,
+} from "@/features/integrations/schemas";
 import type { Integration, IntegrationProvider } from "@/features/integrations/types";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { isApiError } from "@/lib/api/api-error";
@@ -67,29 +71,54 @@ export function useTestIntegrationMutation() {
   });
 }
 
-export function useCreateApiKeyMutation() {
+/**
+ * Credential mutations invalidate rather than patch the cache: the list is
+ * ordered and paginated server-side, and a name change can move a row. There is
+ * nothing secret to keep out of the cache because the response never carries
+ * any - the toast and the row both describe the credential, not its value.
+ */
+export function useCreateCredentialMutation() {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
   return useMutation({
-    mutationFn: (input: CreateApiKeyInput) => apiKeysApi.create(slug, input),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: integrationKeys.apiKeys(slug) });
+    mutationFn: (input: CreateCredentialInput) => credentialsApi.create(slug, input),
+    onSuccess: (credential) => {
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.credentials(slug) });
+      toast.success({ title: "Credential saved", description: `“${credential.name}” is ready to use in a workflow.` });
     },
-    onError: (error) => toast.error({ title: "Could not create the key", description: errorMessage(error, "Please try again.") }),
+    onError: (error) =>
+      toast.error({ title: "Could not save the credential", description: errorMessage(error, "Please try again.") }),
   });
 }
 
-export function useRevokeApiKeyMutation() {
+export function useUpdateCredentialMutation() {
   const queryClient = useQueryClient();
   const { membership } = useWorkspace();
   const slug = membership.workspace.slug;
   return useMutation({
-    mutationFn: (apiKeyId: string) => apiKeysApi.revoke(slug, apiKeyId),
-    onSuccess: (apiKey) => {
-      void queryClient.invalidateQueries({ queryKey: integrationKeys.apiKeys(slug) });
-      toast.success({ title: "Key revoked", description: `“${apiKey.name}” can no longer be used.` });
+    mutationFn: ({ credentialId, input }: { credentialId: string; input: UpdateCredentialInput }) =>
+      credentialsApi.update(slug, credentialId, input),
+    onSuccess: (credential) => {
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.credentials(slug) });
+      toast.success({ title: "Credential updated", description: `“${credential.name}” was saved.` });
     },
-    onError: (error) => toast.error({ title: "Could not revoke the key", description: errorMessage(error, "Please try again.") }),
+    onError: (error) =>
+      toast.error({ title: "Could not update the credential", description: errorMessage(error, "Please try again.") }),
+  });
+}
+
+export function useDeleteCredentialMutation() {
+  const queryClient = useQueryClient();
+  const { membership } = useWorkspace();
+  const slug = membership.workspace.slug;
+  return useMutation({
+    mutationFn: (credentialId: string) => credentialsApi.remove(slug, credentialId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.credentials(slug) });
+      toast.success({ title: "Credential deleted", description: "The stored value was destroyed." });
+    },
+    onError: (error) =>
+      toast.error({ title: "Could not delete the credential", description: errorMessage(error, "Please try again.") }),
   });
 }

@@ -15,6 +15,13 @@ export type EdgeCondition = (typeof EDGE_CONDITIONS)[number];
 
 export const MAX_NODES = 60;
 export const MAX_EDGES = 120;
+/**
+ * `agent.run` steps per definition. Each one is a full agent turn inside the
+ * same request; the run also shares one wall clock across them (see
+ * `WORKFLOW_AGENT_WALL_CLOCK_MS`), so beyond a handful the later steps would
+ * only ever time out.
+ */
+export const MAX_AGENT_STEPS = 5;
 
 const identifierSchema = z
   .string()
@@ -68,6 +75,7 @@ export type DefinitionIssueCode =
   | "self_edge"
   | "cycle"
   | "invalid_config"
+  | "too_many_agent_steps"
   | "branch_missing_outcome"
   | "unexpected_condition"
   | "unreachable_node"
@@ -183,7 +191,31 @@ export function validateDefinition(definition: WorkflowDefinition): DefinitionIs
           field: field || undefined,
         });
       }
+      continue;
     }
+    // The schema accepts an empty agent so a step can be added before one is
+    // chosen; running with one is a different matter. Reported here so the
+    // builder shows it and activation is blocked, rather than every run failing
+    // at this step after earlier steps have already acted.
+    if (node.type === "agent.run" && !(parsed.data as { agentId?: string }).agentId) {
+      issues.push({
+        severity: "error",
+        code: "invalid_config",
+        message: `“${nodeName(node)}”: agentId — Choose an agent for this step`,
+        nodeId: node.id,
+        field: "agentId",
+      });
+    }
+  }
+
+  const agentSteps = nodes.filter((node) => node.type === "agent.run");
+  if (agentSteps.length > MAX_AGENT_STEPS) {
+    issues.push({
+      severity: "error",
+      code: "too_many_agent_steps",
+      message: `Up to ${MAX_AGENT_STEPS} agent steps per workflow; this one has ${agentSteps.length}. Split the work across workflows, or let one agent delegate instead.`,
+      nodeId: agentSteps[MAX_AGENT_STEPS]?.id,
+    });
   }
 
   const { cycle } = topologicalOrder(definition);

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { INSTRUCTIONS_MAX_LENGTH, MEMORY_WINDOW_LIMITS, OUTPUT_SCHEMA_MAX_LENGTH } from "@/features/agents/constants";
+import { DELEGATION_CEILINGS, delegationConfigFormSchema } from "@/features/agents/delegation-limits";
 import { AGENT_TOOLS } from "@/features/agents/tools/registry";
 import { AGENT_STATUSES, AGENT_TOOL_IDS, type AgentToolSetting } from "@/features/agents/types";
 
@@ -124,6 +125,11 @@ export const agentOutputSchemaField = z
 export const createAgentSchema = z.object({
   name: z.string().trim().min(2, { error: "Enter a name" }).max(80, { error: "Keep the name under 80 characters" }),
   description: z.string().trim().max(280, { error: "Keep the description under 280 characters" }).optional(),
+  /**
+   * Creates the agent with the supervisor capability. It still starts with no
+   * delegation grants: choosing the type is not authorizing anything.
+   */
+  canDelegate: z.boolean().optional(),
 });
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
@@ -141,6 +147,15 @@ export const updateAgentSchema = z
     outputSchema: agentOutputSchemaField,
     requiresApproval: z.boolean(),
     collectionIds: z.array(z.uuid()).max(20, { error: "Up to 20 collections" }),
+    /** Supervisor capability. Granting it does not grant any child by itself. */
+    canDelegate: z.boolean(),
+    delegationConfig: delegationConfigFormSchema,
+    /**
+     * The whole grant set, replaced outright. Ownership, archived status and
+     * self-delegation are all re-checked server-side; a uuid here proves
+     * nothing.
+     */
+    delegateIds: z.array(z.uuid()).max(DELEGATION_CEILINGS.maxDelegations * 4, { error: "Too many agents" }),
   })
   .partial()
   .refine((value) => Object.keys(value).length > 0, { error: "Nothing to update" });
