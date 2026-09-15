@@ -92,6 +92,41 @@ signs its own tokens with real RSA keys and proves each rule rejects.
 `scripts/migrate-users-to-firebase.mjs`. That runs on Node, by a person, with a
 service-account credential. Nothing under `src/` imports it.
 
+## Google sign-in
+
+Google is a sign-in method *of* the Firebase project, not a second identity
+system. What comes back is an ordinary Firebase ID token with the same `sub`,
+verified by the same code and resolved through the same `user_identities` row.
+The only server-visible difference is `firebase.sign_in_provider`, which is
+recorded and not acted on. No schema change, no second provider key.
+
+Console: **Authentication → Sign-in method → Google → Enable**, and add every
+deployment's domain under **Authentication → Settings → Authorized domains**.
+Missing the second step is the most common first-time failure and it surfaces
+in the UI as "This site is not authorized for Google sign-in", which is the
+literal fix.
+
+Where each button leads, and why the three differ:
+
+| Page | Action | May create an account? |
+| --- | --- | --- |
+| Sign in | `signInWithFirebaseAction` | **No.** An identity with no application user is refused and pointed at sign-up |
+| Sign up | `signUpWithFirebaseAction` | Yes - and it creates the organization and workspace too |
+| Invitation | `signUpWithInvitationFirebaseAction` | Yes, into the inviting organization; no new one |
+
+Sign-in refusing to create is the §9 rule, not an oversight: a click on a
+sign-in page must never quietly manufacture a tenant.
+
+Sign-up asks for the **organization name before** opening the Google popup.
+Google supplies a name and an address but no organization, and the alternatives
+are both worse - deriving a name from the email domain gives every tenant a name
+nobody chose, and opening the popup first means authenticating somebody and then
+telling them the form was incomplete, by which point a Firebase account exists
+and the page has to explain a half-finished state.
+
+The person's name is taken from the **verified token**, not from a form field,
+which is why `name` is optional on the Firebase sign-up schemas.
+
 ## Email verification
 
 Firebase's own, start to finish. The browser calls `sendEmailVerification()`;
@@ -115,6 +150,19 @@ Gates:
 | `requireWorkspaceAccess` | redirects to `/verify-email` |
 | `requireApiWorkspaceAccess` | 403, before the membership lookup so the answer does not leak which workspaces exist |
 | `requirePlatformAccess` / `requireApiPlatformAccess` | same, before the grant lookup |
+| `requireVerifiedAuthOrRedirect` | `/onboarding`, which **creates** workspaces and is reached precisely by accounts that have none - so the workspace guard never runs for it |
+| `destinationAfterAuth` | every sign-in and registration, so an unverified account is *sent* to the gate rather than bounced off a dashboard it was never allowed to see |
+
+A `?next=` is honoured only for a verified account. Otherwise a link into a
+gated page would decide the destination before the gate got a say - and the
+person would watch the application flicker through a page it never meant to
+show them.
+
+Google registrations pass straight through: the token already carries
+`email_verified: true` because Google proved the address. Nothing is waived -
+the proof simply already exists. Email/password registrations land on
+`/verify-email` with their workspace created and waiting; what is withheld is
+entry to it, not the account.
 
 No loop is possible: `/verify-email` is reached through `requireAuthOrRedirect`,
 never through the gate, and the gate stops redirecting the moment the column is

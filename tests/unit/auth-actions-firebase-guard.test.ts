@@ -111,7 +111,9 @@ describe("password actions once Firebase is the identity provider", () => {
    */
   it("still works where no Firebase project is configured", async () => {
     mocks.firebaseConfigured.mockReturnValue(false);
-    mocks.authenticateWithPassword.mockResolvedValue({ id: "u1", email: "person@rajahx.com", name: "Person" });
+    // `emailVerified` is part of what this returns now, and the destination
+    // depends on it - see verification-gate.test.ts for that rule itself.
+    mocks.authenticateWithPassword.mockResolvedValue({ id: "u1", email: "person@rajahx.com", name: "Person", emailVerified: true });
     mocks.createSession.mockResolvedValue({ token: "t", session: { expiresAt: new Date() } });
 
     await signInAction({ email: "person@rajahx.com", password: "the-real-password" });

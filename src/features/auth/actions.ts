@@ -66,9 +66,35 @@ function safeNextPath(next: string | undefined): string | null {
  * This discloses nothing: the grant lookup runs for the account that just
  * authenticated, and an account without one is unaffected.
  */
-async function landingFor(userId: string, slug: string | null): Promise<string> {
+async function landingFor(user: { id: string; emailVerified: boolean }, slug: string | null): Promise<string> {
+  // The gate, applied at the point of entry rather than only on arrival.
+  //
+  // `requireWorkspaceAccess` would bounce an unverified account off the
+  // dashboard anyway, so this is not what makes the rule hold - it is what
+  // stops the rule being experienced as a flicker through a page the person
+  // was never allowed to see. It also covers the workspace-less destinations,
+  // which the workspace guard by definition never runs for.
+  if (!user.emailVerified) return "/verify-email";
   if (slug) return `/w/${slug}/dashboard`;
-  return (await getPlatformGrant(userId)) ? "/admin" : "/onboarding";
+  return (await getPlatformGrant(user.id)) ? "/admin" : "/onboarding";
+}
+
+/**
+ * Where to send someone who has just authenticated.
+ *
+ * `next` is honoured only for a verified account. An unverified one carrying
+ * `?next=/w/acme/dashboard` must not be handed to the workspace guard just to
+ * be turned away - and more importantly, a `next` that pointed at a
+ * verification-gated page would otherwise decide the destination before the
+ * gate ever got a say.
+ */
+async function destinationAfterAuth(
+  user: { id: string; emailVerified: boolean },
+  slug: string | null,
+  next: string | undefined,
+): Promise<string> {
+  if (!user.emailVerified) return "/verify-email";
+  return safeNextPath(next) ?? (await landingFor(user, slug));
 }
 
 /**
@@ -129,7 +155,7 @@ export async function signInAction(input: SignInInput): Promise<ActionResult> {
     const { token, session } = await createSession(user.id);
     await setSessionCookie(token, session.expiresAt);
     const slug = await findDefaultWorkspaceSlug(user.id);
-    destination = safeNextPath(parsed.data.next) ?? (await landingFor(user.id, slug));
+    destination = await destinationAfterAuth(user, slug, parsed.data.next);
   } catch (error) {
     return toActionFailure(error);
   }
@@ -267,10 +293,10 @@ export async function signInWithFirebaseAction(input: FirebaseSignInInput): Prom
 
   let destination: string;
   try {
-    const { user, workspaceSlug } = await signInWithFirebase(parsed.data.idToken);
+    const { user, emailVerified, workspaceSlug } = await signInWithFirebase(parsed.data.idToken);
     const { token, session } = await createSession(user.id);
     await setSessionCookie(token, session.expiresAt);
-    destination = safeNextPath(parsed.data.next) ?? (await landingFor(user.id, workspaceSlug));
+    destination = await destinationAfterAuth({ ...user, emailVerified }, workspaceSlug, parsed.data.next);
   } catch (error) {
     return toActionFailure(error);
   }
@@ -305,10 +331,13 @@ export async function signUpWithFirebaseAction(input: FirebaseSignUpInput): Prom
 
   let destination: string;
   try {
-    const { user, workspaceSlug } = await registerWithFirebase(parsed.data);
+    const { user, workspaceSlug, emailVerified } = await registerWithFirebase(parsed.data);
     const { token, session } = await createSession(user.id);
     await setSessionCookie(token, session.expiresAt);
-    destination = `/w/${workspaceSlug}/dashboard`;
+    // The workspace exists either way - it is theirs, and it is waiting. What
+    // is withheld is entry to it until the address is confirmed. A Google
+    // registration arrives already verified and goes straight through.
+    destination = emailVerified ? `/w/${workspaceSlug}/dashboard` : "/verify-email";
   } catch (error) {
     return toActionFailure(error);
   }
@@ -330,10 +359,10 @@ export async function signUpWithInvitationFirebaseAction(input: FirebaseInvitedS
 
   let destination: string;
   try {
-    const { user, workspaceSlug } = await registerInvitedWithFirebase(parsed.data);
+    const { user, workspaceSlug, emailVerified } = await registerInvitedWithFirebase(parsed.data);
     const { token, session } = await createSession(user.id);
     await setSessionCookie(token, session.expiresAt);
-    destination = `/w/${workspaceSlug}/dashboard`;
+    destination = emailVerified ? `/w/${workspaceSlug}/dashboard` : "/verify-email";
   } catch (error) {
     return toActionFailure(error);
   }

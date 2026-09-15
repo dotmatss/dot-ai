@@ -6,13 +6,16 @@ import { AppCard } from "@/components/ui/app-card";
 import { AppHeading } from "@/components/ui/app-typography";
 import { CreateWorkspaceForm } from "@/features/workspaces/components/create-workspace-form";
 import { listUserOrganizations } from "@/features/workspaces/server/workspace-repository";
-import { requireAuthOrRedirect } from "@/server/auth/dal";
+import { requireVerifiedAuthOrRedirect } from "@/server/auth/dal";
 import { getPlatformGrant } from "@/server/auth/platform-dal";
 
 export const metadata: Metadata = { title: "Create workspace" };
 
 export default async function OnboardingPage() {
-  const auth = await requireAuthOrRedirect("/onboarding");
+  // Verified, not merely signed in: this page CREATES workspaces, and it is
+  // reached by exactly the accounts that have none - so the workspace guard
+  // that carries the gate everywhere else never runs here.
+  const auth = await requireVerifiedAuthOrRedirect("/onboarding");
   const [organizations, platformGrant] = await Promise.all([
     listUserOrganizations(auth.user.id).then((orgs) => orgs.filter((org) => org.role === "owner" || org.role === "admin")),
     getPlatformGrant(auth.user.id),

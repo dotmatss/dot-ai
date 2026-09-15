@@ -5,11 +5,13 @@ import {
   browserLocalPersistence,
   createUserWithEmailAndPassword,
   getAuth,
+  GoogleAuthProvider,
   reload,
   sendEmailVerification,
   sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
   updateProfile,
   type Auth,
@@ -92,6 +94,34 @@ export function firebaseErrorMessage(error: unknown): string {
       return "Email and password sign-in is not enabled for this application.";
     case "auth/requires-recent-login":
       return "For security, sign in again before making this change.";
+    // The person closed the Google window, or opened a second one. Neither is
+    // an error worth shouting about, and "sign-in failed" for a deliberate
+    // cancellation reads as a bug in the site.
+    case "auth/popup-closed-by-user":
+    case "auth/cancelled-popup-request":
+      return "";
+    case "auth/popup-blocked":
+      return "Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.";
+    /**
+     * Raised where the Firebase project is set to one account per email
+     * address and that address was first registered by a different method.
+     * The instruction is the useful part: the existing method still works, and
+     * linking Google to it is a Firebase-side operation, not something to
+     * improvise here.
+     */
+    case "auth/account-exists-with-different-credential":
+      return "An account already exists for this email using a different sign-in method. Sign in that way instead.";
+    /**
+     * A configuration fault, not a user fault, and the single most likely
+     * thing to be wrong the first time Google sign-in is switched on - the
+     * deployment's domain has to be listed under Firebase Authentication ->
+     * Settings -> Authorized domains. Named explicitly so it is diagnosed from
+     * the screen rather than from a support ticket.
+     */
+    case "auth/unauthorized-domain":
+      return "This site is not authorized for Google sign-in. Add its domain to the Firebase project's authorized domains.";
+    case "auth/operation-not-supported-in-this-environment":
+      return "Google sign-in is not available in this browser context.";
     default:
       if (code) console.error("[auth] unmapped Firebase error", code);
       return "Sign-in failed. Please try again.";
@@ -165,6 +195,50 @@ export async function createFirebaseAccount(input: {
   // `true` forces a refresh so the token carries the profile just written,
   // rather than the one minted microseconds before `updateProfile`.
   return { idToken: await user.getIdToken(true), emailVerified: user.emailVerified };
+}
+
+/**
+ * Google sign-in, through Firebase.
+ *
+ * Note what this does NOT add: a second identity system. Google is a sign-in
+ * method *of* the Firebase project, so what comes back is an ordinary Firebase
+ * ID token with the same `sub`, verified by the same code
+ * (`verify-id-token.ts`) and resolved through the same `user_identities` row.
+ * The only visible difference server-side is `firebase.sign_in_provider`,
+ * which is recorded and not acted on.
+ *
+ * ── Why these accounts skip the verification gate ───────────────────────────
+ *
+ * They do not skip it - they satisfy it. A Google token carries
+ * `email_verified: true` because Google has already proved the address, so the
+ * mirror in `users.email_verified` is set from that claim exactly as it would
+ * be after somebody clicked a link in a verification email. Nothing is waived;
+ * the proof simply already exists.
+ *
+ * ── Popup, not redirect ─────────────────────────────────────────────────────
+ *
+ * The redirect flow means handling `getRedirectResult` on page load, on every
+ * page that could be returned to, and carrying the pending organization name
+ * across a full navigation. The popup keeps the whole exchange inside one
+ * component, at the cost of needing `auth/popup-blocked` mapped to something a
+ * person can act on - which `firebaseErrorMessage` does.
+ */
+export async function signInWithGoogle(): Promise<FirebaseCredentialResult & { displayName: string | null }> {
+  const auth = firebaseAuth();
+  await ensurePersistence(auth);
+
+  const provider = new GoogleAuthProvider();
+  // Always ask which account to use. Without this, a browser signed into one
+  // Google account silently reuses it, which is the wrong default on a shared
+  // machine and impossible to recover from without clearing Google's cookies.
+  provider.setCustomParameters({ prompt: "select_account" });
+
+  const credential = await signInWithPopup(auth, provider);
+  return {
+    idToken: await credential.user.getIdToken(),
+    emailVerified: credential.user.emailVerified,
+    displayName: credential.user.displayName,
+  };
 }
 
 export async function signInToFirebase(email: string, password: string): Promise<FirebaseCredentialResult> {

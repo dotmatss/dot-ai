@@ -41,18 +41,42 @@ export interface AuthenticatedUser {
   name: string;
 }
 
+/** An authenticated user plus the state the post-sign-in gate needs. */
+export interface AuthenticatedUserWithVerification extends AuthenticatedUser {
+  emailVerified: boolean;
+}
+
 /**
  * Password identity provider. Other identity providers (Firebase / Google) are
  * expected to verify their own credential and then call `findOrCreateUserForIdentity`
  * so that every provider ends in the same application session.
  */
-export async function authenticateWithPassword(email: string, password: string): Promise<AuthenticatedUser | null> {
-  const rows = await withDb((db) => db.select({ id: users.id, email: users.email, name: users.name, passwordHash: users.passwordHash }).from(users).where(and(eq(users.email, email), isNull(users.disabledAt))).limit(1));
+export async function authenticateWithPassword(
+  email: string,
+  password: string,
+): Promise<AuthenticatedUserWithVerification | null> {
+  const rows = await withDb((db) =>
+    db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        passwordHash: users.passwordHash,
+        emailVerified: users.emailVerified,
+      })
+      .from(users)
+      .where(and(eq(users.email, email), isNull(users.disabledAt)))
+      .limit(1),
+  );
   const user = rows[0];
   const hash = user?.passwordHash ?? (await getDummyHash());
   const valid = await verifyPassword(password, hash);
   if (!user || !user.passwordHash || !valid) return null;
-  return { id: user.id, email: user.email, name: user.name };
+  // Carried out rather than assumed. Accounts created on this path are
+  // verified by construction, but an account that LATER linked Firebase and
+  // changed its address there is not, and the caller must route it to the
+  // verification gate like any other.
+  return { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified };
 }
 
 export interface RegistrationResult {

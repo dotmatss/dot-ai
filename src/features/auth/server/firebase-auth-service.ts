@@ -84,17 +84,24 @@ export async function verifyIdTokenOrThrow(idToken: string): Promise<FirebaseIdT
  * Refusing here is better than inventing a placeholder address that would then
  * collide with a real one.
  */
-function identityFrom(claims: FirebaseIdTokenClaims, fallbackName: string): ExternalIdentity {
+function identityFrom(claims: FirebaseIdTokenClaims, fallbackName?: string): ExternalIdentity {
   if (!claims.email) {
     throw ApiError.badRequest("This sign-in method does not provide an email address, which this application requires.");
   }
+  // Normalised the same way `emailSchema` normalises typed input, so the citext
+  // column, the invitation lookup and the token all agree.
+  const email = claims.email.trim().toLowerCase();
+  // The token's name first: it is the provider's, it is verified, and for a
+  // Google registration it is the only one there is. Then whatever was typed.
+  // Then the address itself - `users.name` is NOT NULL, and an account with a
+  // blank name renders as an empty avatar and an empty menu rather than
+  // failing loudly, so the last resort is something rather than nothing.
+  const name = claims.name?.trim() || fallbackName?.trim() || email.split("@")[0] || email;
   return {
     provider: FIREBASE_PROVIDER,
     providerUid: claims.uid,
-    // Normalised the same way `emailSchema` normalises typed input, so the
-    // citext column, the invitation lookup and the token all agree.
-    email: claims.email.trim().toLowerCase(),
-    name: (claims.name ?? fallbackName).trim() || fallbackName,
+    email,
+    name,
     avatarUrl: claims.picture,
     emailVerified: claims.emailVerified,
   };
@@ -130,7 +137,7 @@ export async function signInWithFirebase(idToken: string): Promise<FirebaseSignI
     return { user: linked, emailVerified: claims.emailVerified, workspaceSlug: await findDefaultWorkspaceSlug(linked.id) };
   }
 
-  const identity = identityFrom(claims, claims.email ?? "");
+  const identity = identityFrom(claims);
 
   // Only ever used to choose between "link an account that already exists" and
   // "refuse" - never to authenticate. `findOrCreateUserForIdentity` re-applies
@@ -152,7 +159,8 @@ export async function signInWithFirebase(idToken: string): Promise<FirebaseSignI
 
 export interface FirebaseRegistrationInput {
   idToken: string;
-  name: string;
+  /** Absent for a Google registration; the verified token carries the name. */
+  name?: string;
   organizationName: string;
 }
 
@@ -199,7 +207,8 @@ export async function registerWithFirebase(input: FirebaseRegistrationInput): Pr
 
 export interface InvitedFirebaseRegistrationInput {
   idToken: string;
-  name: string;
+  /** Absent for a Google registration; the verified token carries the name. */
+  name?: string;
   invitationToken: string;
 }
 

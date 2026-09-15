@@ -89,7 +89,13 @@ export type FirebaseSignInInput = z.infer<typeof firebaseSignInSchema>;
  */
 export const firebaseSignUpSchema = z.object({
   idToken: firebaseIdTokenSchema,
-  name: z.string().trim().min(2, { error: "Enter your name" }).max(80),
+  /**
+   * Optional because a Google registration has no name field to fill in - the
+   * profile name rides in the verified token, which is a better source than a
+   * form anyway. The email/password form still sends it, and either way the
+   * token wins: see `identityFrom`.
+   */
+  name: z.string().trim().min(2, { error: "Enter your name" }).max(80).optional(),
   organizationName: z.string().trim().min(2, { error: "Enter an organization name" }).max(80),
 });
 
@@ -97,7 +103,8 @@ export type FirebaseSignUpInput = z.infer<typeof firebaseSignUpSchema>;
 
 export const firebaseInvitedSignUpSchema = z.object({
   idToken: firebaseIdTokenSchema,
-  name: z.string().trim().min(2, { error: "Enter your name" }).max(80),
+  /** Optional for the same reason as above: a Google registration has none. */
+  name: z.string().trim().min(2, { error: "Enter your name" }).max(80).optional(),
   invitationToken: invitationTokenSchema,
 });
 

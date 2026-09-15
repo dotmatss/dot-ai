@@ -186,6 +186,22 @@ export async function requireAuthOrRedirect(next?: string): Promise<AuthContext>
 }
 
 /**
+ * Signed in AND verified, for pages outside a workspace that still create or
+ * expose tenant state.
+ *
+ * `/onboarding` is the one that matters today: it creates workspaces, and it
+ * is reached precisely by accounts that have no workspace yet - so
+ * `requireWorkspaceAccess`, which carries the gate for everything under
+ * `/w/[slug]`, by definition never runs for it. Without this an unverified
+ * account could build the workspace it is not yet allowed to enter.
+ */
+export async function requireVerifiedAuthOrRedirect(next?: string): Promise<AuthContext> {
+  const auth = await requireAuthOrRedirect(next);
+  requireVerifiedEmail(auth);
+  return auth;
+}
+
+/**
  * For route handlers: throws an ApiError instead of rendering.
  *
  * Accepts the session cookie or an `Authorization: Bearer <firebase-id-token>`,

@@ -11,7 +11,8 @@ import { AppButton } from "@/components/ui/app-button";
 import { AppInput, AppPasswordInput } from "@/components/ui/app-input";
 import { isFirebaseAuthEnabled } from "@/config/firebase";
 import { signUpWithInvitationAction, signUpWithInvitationFirebaseAction } from "@/features/auth/actions";
-import { createFirebaseAccount, firebaseErrorMessage } from "@/features/auth/firebase-client";
+import { AuthDivider, GoogleAuthButton } from "@/features/auth/components/google-auth-button";
+import { createFirebaseAccount, firebaseErrorMessage, signInWithGoogle } from "@/features/auth/firebase-client";
 import { invitedSignUpSchema, type InvitedSignUpInput } from "@/features/auth/schemas";
 import { applyFieldErrors } from "@/lib/forms/apply-field-errors";
 
@@ -30,11 +31,38 @@ import { applyFieldErrors } from "@/lib/forms/apply-field-errors";
 export function InvitedSignUpForm({ token, email }: { token: string; email: string }) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [googlePending, startGoogle] = useTransition();
   const firebaseEnabled = isFirebaseAuthEnabled();
   const form = useForm<InvitedSignUpInput>({
     resolver: zodResolver(invitedSignUpSchema),
     defaultValues: { name: "", email, password: "", invitationToken: token },
   });
+
+  /**
+   * Accepting an invitation with Google.
+   *
+   * No organization name is needed - the invitation names one - so this is the
+   * simplest of the three Google paths. The address is not checked here on
+   * purpose: `claimInvitation` compares the invitation against the address in
+   * the VERIFIED token and refuses a mismatch by name ("This invitation was
+   * sent to ..."), which is both the security boundary and the more useful
+   * message. Checking it in the browser first would only duplicate it.
+   */
+  function continueWithGoogle() {
+    setServerError(null);
+    startGoogle(async () => {
+      let idToken: string;
+      try {
+        ({ idToken } = await signInWithGoogle());
+      } catch (error) {
+        const message = firebaseErrorMessage(error);
+        if (message) setServerError(message);
+        return;
+      }
+      const result = await signUpWithInvitationFirebaseAction({ idToken, invitationToken: token });
+      if (result && !result.ok) setServerError(result.error);
+    });
+  }
 
   const onSubmit = form.handleSubmit((values) => {
     setServerError(null);
@@ -76,6 +104,17 @@ export function InvitedSignUpForm({ token, email }: { token: string; email: stri
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       {serverError ? <AppAlert tone="danger">{serverError}</AppAlert> : null}
       <input type="hidden" {...form.register("invitationToken")} />
+      {firebaseEnabled ? (
+        <>
+          <GoogleAuthButton
+            label={`Join with Google`}
+            pending={googlePending}
+            disabled={pending}
+            onClick={continueWithGoogle}
+          />
+          <AuthDivider label="or with email" />
+        </>
+      ) : null}
       <AppFormField label="Your name" error={form.formState.errors.name?.message} required>
         {(field) => (
           <AppInput {...field} {...form.register("name")} autoComplete="name" placeholder="Ada Lovelace" autoFocus />
@@ -104,7 +143,7 @@ export function InvitedSignUpForm({ token, email }: { token: string; email: stri
           />
         )}
       </AppFormField>
-      <AppButton type="submit" fullWidth loading={pending} size="lg">
+      <AppButton type="submit" fullWidth loading={pending} disabled={googlePending} size="lg">
         Create account and join
       </AppButton>
       <p className="text-center text-sm text-foreground-muted">
