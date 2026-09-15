@@ -6,6 +6,17 @@
     "nodejs_compat"
   ],
   "main": "vinext/server/fetch-handler",
+  "vars": {
+    // Not cosmetic. NODE_ENV gates the Secure flag on the session cookie
+    // (src/server/auth/session.ts) and the refusal to fall back to the
+    // development signing key (src/config/env.ts), neither of which may be
+    // left to whatever the runtime happens to default to.
+    "NODE_ENV": "production",
+    // Origin enforcement for the public chat API, the MCP OAuth redirect URIs
+    // and invitation links are all built from this, so it has to be the real
+    // deployed origin rather than the localhost default.
+    "APP_URL": "https://dot.jeffersonaalaiza.workers.dev"
+  },
   "assets": {
     "directory": "dist/client",
     "not_found_handling": "none",
@@ -16,5 +27,18 @@
   },
   "version_metadata": {
     "binding": "CF_VERSION_METADATA"
-  }
+  },
+  // Postgres reaches the app through Hyperdrive, which owns the connection
+  // pool. src/server/db/client.ts reads this binding's connectionString and
+  // opens one client per request; see docs/deployment.md.
+  //
+  // Points at Supabase's Supavisor pooler in session mode (port 5432), not the
+  // direct connection: db.<ref>.supabase.co resolves to AAAA only, and the
+  // IPv4 add-on is not enabled on this project.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "9aba1580ddbb458ab26051330ccf3c84"
+    }
+  ]
 }

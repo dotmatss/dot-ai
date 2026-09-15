@@ -39,7 +39,13 @@ export const getAuthContext = cache(async (): Promise<AuthContext | null> => {
   if (!session) return null;
   const userRows = await withDb((db) =>
     db
-      .select({ id: users.id, email: users.email, name: users.name, avatarUrl: users.avatarUrl })
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        avatarUrl: users.avatarUrl,
+        emailVerified: users.emailVerified,
+      })
       .from(users)
       .where(and(eq(users.id, session.userId), isNull(users.disabledAt)))
       .limit(1),
@@ -48,7 +54,13 @@ export const getAuthContext = cache(async (): Promise<AuthContext | null> => {
   if (!user) return null;
   return {
     session,
-    user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      emailVerified: user.emailVerified,
+    },
   };
 });
 

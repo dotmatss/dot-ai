@@ -42,4 +42,14 @@ export interface CurrentUser {
   email: string;
   name: string;
   avatarUrl: string | null;
+  /**
+   * Mirror of the identity provider's verification state (0029).
+   *
+   * Carried on the authenticated user rather than re-read per feature so that
+   * "is this address verified" has one answer per request, and so a page
+   * gating on it cannot accidentally gate on a client-supplied boolean - the
+   * value only ever arrives here from `users.email_verified`, which only the
+   * server writes, and only from a verified ID token.
+   */
+  emailVerified: boolean;
 }
