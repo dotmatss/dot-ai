@@ -62,6 +62,41 @@ that has `FIREBASE_PROJECT_ID` set: Firebase owns passwords there, and the
 password Server Actions refuse. It matters only for local development and the
 test suite, which run without a Firebase project by design.
 
+### Migrating the deployed database
+
+**Hyperdrive binds a database; it does not populate one.** These are two
+separate acts, and the gap between them has bitten this project once already:
+the Worker was deployed with the binding configured against a Supabase project
+whose migrations had never been run. `/api/health` reported `database: ok`
+(it only ran `SELECT version()` then), CI's smoke test passed on that, and the
+first visitor to the sign-in page got "Something went wrong" from a failed
+`SELECT ... FROM users`.
+
+`scripts/migrate.mjs` reads `DATABASE_URL` from `.env.local`, which on a
+developer machine points at local PostgreSQL. Running `pnpm db:migrate` after a
+deploy therefore migrates a laptop, not production. The deployed database has to
+be named explicitly:
+
+```bash
+# Check first - this only reads schema_migrations.
+DATABASE_URL="postgresql://<user>:<password>@<host>:5432/postgres" pnpm db:migrate --status
+
+DATABASE_URL="postgresql://<user>:<password>@<host>:5432/postgres" pnpm db:migrate
+```
+
+Use the **session-mode** pooler (port 5432) or the direct connection, not
+transaction mode (6543): each migration runs inside a transaction, and some
+create types and functions that transaction pooling will not carry across
+statements. That is the same endpoint the Hyperdrive config points at.
+
+This runs from a machine that can reach the database, not from CI, and it is a
+deliberate manual step: a deploy pipeline that silently migrates a production
+schema is how an unreviewed `DROP` reaches production at 2am.
+
+`/api/health` now fails closed on this - it checks `to_regclass('public.users')`
+alongside the connection and returns 503 with `"schema":"missing"` when the
+database is reachable but empty, which the smoke test asserts.
+
 ### The database on Workers
 
 `pg` additionally needs Hyperdrive, since per-isolate pooling is not the same

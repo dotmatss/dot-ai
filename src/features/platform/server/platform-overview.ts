@@ -171,9 +171,14 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
   const database = await pingDatabase();
 
   return {
-    database: database.ok
-      ? { status: "healthy", detail: "Connected" }
-      : { status: "unavailable", detail: database.error },
+    database: !database.ok
+      ? { status: "unavailable", detail: database.error }
+      : database.schema
+        ? { status: "healthy", detail: "Connected" }
+        : // Reachable but unmigrated. Called out rather than shown as healthy:
+          // an operator looking at a green tick while every sign-in fails is
+          // exactly how this went unnoticed once already.
+          { status: "unavailable", detail: "Connected, but the schema is missing. Run the database migrations." },
     aiGateway: aiGatewayHealth(),
     embeddings: embeddingHealth(),
   };

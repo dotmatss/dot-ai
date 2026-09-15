@@ -307,12 +307,39 @@ export async function withWorkspace<T>(workspaceId: string, fn: (client: PoolCli
 }
 
 /** Lightweight connectivity probe for health checks and setup diagnostics. */
-export async function pingDatabase(): Promise<{ ok: true; version: string } | { ok: false; error: string }> {
+/**
+ * Liveness AND readiness, which are not the same question.
+ *
+ * `SELECT version()` alone answers "can this runtime reach a PostgreSQL",
+ * which a completely empty database answers with a cheerful yes. That is not a
+ * hypothetical: a deployment once pointed at a Supabase project whose
+ * migrations had never been run, `/api/health` reported `database: ok`, the CI
+ * smoke test passed on it, and the first person to load the sign-in page got
+ * "Something went wrong" from a failed `SELECT ... FROM users`. Connectivity
+ * was never the thing worth checking.
+ *
+ * So the probe asks a second question: is the schema actually there.
+ * `to_regclass` resolves a table name to an OID, or NULL if it does not exist -
+ * no rows are read, no permissions on the contents are needed, and it cannot
+ * fail merely because the table is empty. `users` is the right table to name:
+ * every authenticated request begins with it, so a deployment where this is
+ * NULL is a deployment where nobody can sign in.
+ *
+ * Both answers are returned separately because they call for different actions:
+ * "cannot reach the database" is a connection string, a firewall or an outage,
+ * while "reached it and the schema is missing" is one command - `db:migrate`
+ * against the right DATABASE_URL.
+ */
+export async function pingDatabase(): Promise<
+  { ok: true; version: string; schema: boolean } | { ok: false; error: string; schema: false }
+> {
   try {
-    const row = await queryOne<{ version: string }>("SELECT version() AS version");
-    return { ok: true, version: row?.version ?? "unknown" };
+    const row = await queryOne<{ version: string; users_table: string | null }>(
+      "SELECT version() AS version, to_regclass('public.users')::text AS users_table",
+    );
+    return { ok: true, version: row?.version ?? "unknown", schema: Boolean(row?.users_table) };
   } catch (error) {
     const translated = translateDbError(error);
-    return { ok: false, error: translated.message };
+    return { ok: false, error: translated.message, schema: false };
   }
 }

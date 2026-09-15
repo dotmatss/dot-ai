@@ -131,9 +131,18 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Smoke test the deployment
-        # A successful upload is not a working app. /api/health also pings
-        # Postgres through Hyperdrive, so this fails the run if the binding or
-        # the database is wrong - the difference between "deployed" and "up".
+        # A successful upload is not a working app. /api/health pings Postgres
+        # through Hyperdrive AND checks that the schema is actually there, so
+        # this fails the run if the binding, the database or the migrations are
+        # wrong - the difference between "deployed" and "up".
+        #
+        # Both conditions are asserted, and the schema one is not optional: the
+        # endpoint used to check connectivity alone, this step went green over a
+        # Supabase project whose migrations had never been run, and the first
+        # real visitor got "Something went wrong" on sign-in. `curl -f` already
+        # fails on the 503 that /api/health now returns in that state; the
+        # explicit case below is what says WHY in the log.
+        #
         # Retried because a new version takes a moment to propagate.
         run: |
           set -euo pipefail
@@ -141,8 +150,12 @@ jobs:
             if body=$(curl -fsS --max-time 30 https://dot.rajahx.com/api/health); then
               echo "$body"
               case "$body" in
-                *'"database":"ok"'*) echo "Health check passed."; exit 0 ;;
-                *) echo "Reachable, but the database check did not report ok." ;;
+                *'"database":"ok"'*'"schema":"ok"'*)
+                  echo "Health check passed."; exit 0 ;;
+                *'"schema":"missing"'*)
+                  echo "Reachable, but the schema is missing - run the database migrations against the deployed database." ;;
+                *)
+                  echo "Reachable, but the database check did not report ok." ;;
               esac
             fi
             echo "Attempt $attempt failed; retrying in 10s."
