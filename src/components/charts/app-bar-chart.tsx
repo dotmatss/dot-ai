@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 
+import { axisLabelAnchor, axisLabelIndices } from "@/components/charts/axis";
 import { cn } from "@/lib/cn";
 import { formatCompactNumber, formatNumber } from "@/lib/format/number";
 
@@ -18,17 +19,23 @@ interface AppBarChartProps {
   title: string;
   valueLabel?: string;
   compareLabel?: string;
+  /** Height of the plot area in CSS pixels. Axis labels sit outside it. */
   height?: number;
   className?: string;
   formatValue?: (value: number) => string;
 }
 
-const MAX_BAR_WIDTH = 24;
-
 /**
- * Single-series column chart (optional comparison series in gray). Columns
- * are ≤24px, rounded at the data end and square at the baseline; hairline
+ * Single-series column chart (optional comparison series in gray). Columns are
+ * at most 24px, rounded at the data end and square at the baseline; hairline
  * gridlines; per-bar hover tooltip; table fallback for assistive tech.
+ *
+ * Drawn in HTML rather than SVG, on purpose. The previous version put the bars
+ * and the axis labels in a viewBox, where every unit is multiplied by (rendered
+ * width / 600). In a full-width card that factor is well over two, so an 11px
+ * label rendered at more than 24px, the plot came out twice the height it asked
+ * for, and the 24px column cap meant nothing. Percentage heights stretch
+ * horizontally and leave type, radii and column widths in real pixels.
  */
 export function AppBarChart({
   data,
@@ -42,92 +49,127 @@ export function AppBarChart({
   const id = useId();
   const [active, setActive] = useState<number | null>(null);
 
-  const width = 600;
-  const padLeft = 36;
-  const padRight = 8;
-  const padTop = 12;
-  const padBottom = 28;
-  const plotW = width - padLeft - padRight;
-  const plotH = height - padTop - padBottom;
-  const max = Math.max(1, ...data.map((d) => Math.max(d.value, d.compare ?? 0)));
+  const max = Math.max(1, ...data.map((datum) => Math.max(datum.value, datum.compare ?? 0)));
   const niceMax = niceCeil(max);
   const ticks = [0, niceMax / 2, niceMax];
-  const slot = plotW / Math.max(1, data.length);
-  const hasCompare = data.some((d) => d.compare !== undefined);
-  const barW = Math.min(MAX_BAR_WIDTH, slot * (hasCompare ? 0.32 : 0.55));
-  const gap = 2;
-
-  const y = (value: number) => padTop + plotH - (value / niceMax) * plotH;
-  const labelEvery = Math.ceil(data.length / 8);
+  const hasCompare = data.some((datum) => datum.compare !== undefined);
+  const labelled = new Set(axisLabelIndices(data.length));
+  const slots = Math.max(1, data.length);
+  const barHeight = (value: number) => `${Math.max(0, Math.min(100, (value / niceMax) * 100))}%`;
+  const slotCentre = (index: number) => `${((index + 0.5) / slots) * 100}%`;
 
   return (
     <figure className={cn("w-full", className)}>
-      <div className="relative">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-title`} aria-describedby={`${id}-table`}>
-          <title id={`${id}-title`}>{title}</title>
+      <span id={`${id}-title`} className="sr-only">
+        {title}
+      </span>
+
+      <div className="flex gap-2">
+        <div aria-hidden className="relative w-9 shrink-0" style={{ height }}>
           {ticks.map((tick) => (
-            <g key={tick}>
-              <line x1={padLeft} x2={width - padRight} y1={y(tick)} y2={y(tick)} stroke="var(--color-border)" strokeWidth={1} shapeRendering="crispEdges" />
-              <text x={padLeft - 8} y={y(tick)} textAnchor="end" dominantBaseline="middle" className="fill-foreground-muted text-[11px] tabular-nums">
-                {formatCompactNumber(tick)}
-              </text>
-            </g>
+            <span
+              key={tick}
+              className="absolute right-0 -translate-y-1/2 text-caption tabular-nums text-foreground-muted"
+              style={{ top: `${100 - (tick / niceMax) * 100}%` }}
+            >
+              {formatCompactNumber(tick)}
+            </span>
           ))}
-          {data.map((datum, index) => {
-            const cx = padLeft + slot * index + slot / 2;
-            const isActive = active === index;
-            const barX = hasCompare ? cx - barW - gap / 2 : cx - barW / 2;
-            const compareX = cx + gap / 2;
-            const valueTop = y(datum.value);
-            const compareTop = datum.compare !== undefined ? y(datum.compare) : null;
-            return (
-              <g
-                key={datum.label}
-                onMouseEnter={() => setActive(index)}
-                onMouseLeave={() => setActive(null)}
-                onFocus={() => setActive(index)}
-                onBlur={() => setActive(null)}
-                tabIndex={0}
-                role="graphics-symbol"
-                aria-label={`${datum.label}: ${formatValue(datum.value)}${datum.compare !== undefined ? `, ${compareLabel.toLowerCase()} ${formatValue(datum.compare)}` : ""}`}
-                className="outline-none"
-              >
-                {/* Hit target spans the whole slot so small bars are easy to hover. */}
-                <rect x={padLeft + slot * index} y={padTop} width={slot} height={plotH} fill="transparent" />
-                {compareTop !== null ? (
-                  <path d={roundedColumn(compareX, compareTop, barW, padTop + plotH - compareTop)} fill="var(--color-foreground-subtle)" opacity={isActive ? 1 : 0.9} />
-                ) : null}
-                <path d={roundedColumn(barX, valueTop, barW, padTop + plotH - valueTop)} fill="var(--color-foreground)" opacity={active === null || isActive ? 1 : 0.55} />
-                {index % labelEvery === 0 || index === data.length - 1 ? (
-                  <text x={cx} y={height - 8} textAnchor="middle" className="fill-foreground-muted text-[11px]">
-                    {datum.label}
-                  </text>
-                ) : null}
-              </g>
-            );
-          })}
-        </svg>
-        {active !== null && data[active] ? (
-          <div
-            role="tooltip"
-            className="pointer-events-none absolute -translate-x-1/2 rounded-md bg-surface-inverted px-2.5 py-1.5 text-xs text-foreground-inverted shadow-md"
-            style={{
-              left: `${((padLeft + slot * active + slot / 2) / width) * 100}%`,
-              top: 0,
-            }}
-          >
-            <p className="font-medium">{data[active].label}</p>
-            <p className="tabular-nums">
-              {valueLabel}: {formatValue(data[active].value)}
-            </p>
-            {data[active].compare !== undefined ? (
-              <p className="tabular-nums text-foreground-inverted/70">
-                {compareLabel}: {formatValue(data[active].compare)}
-              </p>
-            ) : null}
+        </div>
+
+        <div className="relative min-w-0 flex-1">
+          <div aria-hidden className="absolute inset-0">
+            {ticks.map((tick) => (
+              <div
+                key={tick}
+                className="absolute inset-x-0 h-px -translate-y-1/2 bg-border"
+                style={{ top: `${100 - (tick / niceMax) * 100}%` }}
+              />
+            ))}
           </div>
-        ) : null}
+
+          <div
+            role="img"
+            aria-labelledby={`${id}-title`}
+            aria-describedby={`${id}-table`}
+            className="relative flex items-end"
+            style={{ height }}
+          >
+            {data.map((datum, index) => {
+              const isActive = active === index;
+              return (
+                <div
+                  key={datum.label}
+                  onMouseEnter={() => setActive(index)}
+                  onMouseLeave={() => setActive(null)}
+                  onFocus={() => setActive(index)}
+                  onBlur={() => setActive(null)}
+                  tabIndex={0}
+                  role="graphics-symbol"
+                  aria-label={`${datum.label}: ${formatValue(datum.value)}${datum.compare !== undefined ? `, ${compareLabel.toLowerCase()} ${formatValue(datum.compare)}` : ""}`}
+                  className="flex h-full min-w-0 flex-1 items-end justify-center gap-0.5 px-0.5 outline-none"
+                >
+                  {datum.compare !== undefined ? (
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "min-h-px w-full max-w-3 rounded-t-xs bg-foreground-subtle",
+                        isActive ? "opacity-100" : "opacity-90",
+                      )}
+                      style={{ height: barHeight(datum.compare) }}
+                    />
+                  ) : null}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "min-h-px w-full rounded-t-xs bg-foreground",
+                      hasCompare ? "max-w-3" : "max-w-6",
+                      active === null || isActive ? "opacity-100" : "opacity-55",
+                    )}
+                    style={{ height: barHeight(datum.value) }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {active !== null && data[active] ? (
+            <div
+              role="tooltip"
+              className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md bg-surface-inverted px-2.5 py-1.5 text-xs text-foreground-inverted shadow-md"
+              style={{ left: slotCentre(active) }}
+            >
+              <p className="font-medium">{data[active].label}</p>
+              <p className="tabular-nums">
+                {valueLabel}: {formatValue(data[active].value)}
+              </p>
+              {data[active].compare !== undefined ? (
+                <p className="tabular-nums text-foreground-inverted/70">
+                  {compareLabel}: {formatValue(data[active].compare)}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div aria-hidden className="relative mt-2 h-4">
+            {data.map((datum, index) =>
+              labelled.has(index) ? (
+                <span
+                  key={datum.label}
+                  className={cn(
+                    "absolute whitespace-nowrap text-caption text-foreground-muted",
+                    axisLabelAnchor(index, data.length),
+                  )}
+                  style={{ left: slotCentre(index) }}
+                >
+                  {datum.label}
+                </span>
+              ) : null,
+            )}
+          </div>
+        </div>
       </div>
+
       {hasCompare ? (
         <figcaption className="mt-2 flex items-center gap-4 text-xs text-foreground-muted">
           <span className="inline-flex items-center gap-1.5">
@@ -140,6 +182,7 @@ export function AppBarChart({
           </span>
         </figcaption>
       ) : null}
+
       <table id={`${id}-table`} className="sr-only">
         <caption>{title}</caption>
         <thead>
@@ -161,21 +204,6 @@ export function AppBarChart({
       </table>
     </figure>
   );
-}
-
-function roundedColumn(x: number, top: number, width: number, height: number): string {
-  if (height <= 0) return "";
-  const r = Math.min(4, width / 2, height);
-  const bottom = top + height;
-  return [
-    `M${x} ${bottom}`,
-    `V${top + r}`,
-    `Q${x} ${top} ${x + r} ${top}`,
-    `H${x + width - r}`,
-    `Q${x + width} ${top} ${x + width} ${top + r}`,
-    `V${bottom}`,
-    "Z",
-  ].join(" ");
 }
 
 function niceCeil(value: number): number {

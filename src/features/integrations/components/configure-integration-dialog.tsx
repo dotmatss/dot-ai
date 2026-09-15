@@ -221,7 +221,7 @@ function ConfigureForm({
             Zapier.
           </AppText>
           <Link
-            href={`/w/${membership.workspace.slug}/integrations/api-keys` as Route}
+            href={`/w/${membership.workspace.slug}/developer` as Route}
             className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium underline underline-offset-4 focus-ring rounded-xs"
           >
             <KeyRound aria-hidden className="size-4" />

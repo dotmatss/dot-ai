@@ -1,0 +1,6 @@
+# pnpm blocks dependency build scripts by default. These two need theirs: esbuild
+# downloads its native binary (vitest, drizzle-kit) and unrs-resolver builds the
+# native resolver behind the ESLint import plugin.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true

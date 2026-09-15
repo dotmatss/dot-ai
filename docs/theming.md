@@ -58,3 +58,18 @@ The embeddable chat widget (`src/features/embed/`) and its preview do **not** fo
 1. Use semantic tokens. If you need a colour that has no token, add a token to both `:root` and `.dark` rather than hard-coding a value.
 2. Check both themes, and check the pairing that usually fails: muted foreground on a muted surface, and status text on a status background.
 3. For charts, bars, tracks and axis lines must use tokens or they vanish on a dark ground.
+
+## Plugin styles: `prose` and `form-*`
+
+`src/app/globals.css` registers two first-party Tailwind plugins, and re-binds both to the tokens above.
+
+**`@tailwindcss/typography`** provides `prose` for long-form rich text — anything rendered from markup the app does not class element by element. Its stock gray palette would be a second palette in a monochrome app and would stay light in dark mode, so every `--tw-prose-*` variable points at a semantic token instead. Two consequences worth knowing:
+
+- `dark:prose-invert` is unnecessary. The tokens already flip, so `prose` flips with them; the `invert` variables are pointed at the same tokens, which makes a stray `prose-invert` a no-op rather than a contradicting second theme.
+- Code inside `prose` matches `AppCodeBlock` and `AppInlineCode` — fixed ink in both themes, because a code block reads as a dark panel either way.
+
+**`@tailwindcss/forms`** is registered with the **class** strategy, not the default `base`. The `base` strategy restyles every `input`, `select`, `textarea`, checkbox and radio in the document, which would fight the primitives in `src/components/ui` — those already normalise the same elements with `appearance-none` and token colours, and the plugin's blue focus ring and white grounds would win in places. With `class`, nothing changes until someone writes `form-input`, `form-select`, `form-checkbox`, `form-radio` or `form-textarea`, and when they do, the override block in `globals.css` gives them token colours, `--radius-md` corners, and the same `:focus-visible` outline every other control uses.
+
+Reach for `form-*` only for a control rendered outside a primitive. If you find yourself styling a plain `<input>` in a feature, the primitive is usually the better answer.
+
+Both override blocks sit **outside** `@layer` on purpose: plugin utilities compile into `@layer utilities`, and an unlayered rule outranks a layered one, so the overrides win without `!important` or a specificity contest.

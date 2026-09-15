@@ -35,7 +35,7 @@ export default function DocsIndexPage() {
           <section key={section.title} aria-labelledby={`section-${section.title.replace(/\s+/g, "-").toLowerCase()}`}>
             <h2
               id={`section-${section.title.replace(/\s+/g, "-").toLowerCase()}`}
-              className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted"
+              className="text-caption font-medium uppercase tracking-caption text-foreground-muted"
             >
               {section.title}
             </h2>

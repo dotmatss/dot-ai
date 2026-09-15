@@ -10,6 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DELEGATION_DEFAULTS } from "@/features/agents/delegation-limits";
 import type { AgentMcpToolAttachment } from "@/features/mcp/agent-attachment";
 import type { McpDiscoveredTool, McpRiskClass, McpServer, McpServerStatus, McpToolGrant } from "@/features/mcp/types";
 import { ApiError } from "@/lib/api/api-error";
@@ -247,6 +248,10 @@ describe("what the prompt says about MCP tools", () => {
     enabledToolCount: 0,
     conversationCount: 0,
     requiresApproval: false,
+    canDelegate: false,
+    delegateIds: [],
+    delegateCount: 0,
+    delegationConfig: { ...DELEGATION_DEFAULTS },
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
   };

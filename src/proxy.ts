@@ -2,8 +2,16 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const SESSION_COOKIE = "dot_session";
 
-/** Pages that must render for signed-out visitors. */
-const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/embed", "/docs"];
+/**
+ * Pages that must render for signed-out visitors.
+ *
+ * `/invite` is here because an invitation link is sent to someone who, by
+ * definition, may not have an account yet: bouncing them to /sign-in would show
+ * a sign-in form to a person who needs the sign-up half of the page, and lose
+ * the context of which organization invited them. The page itself reveals
+ * nothing without a valid token.
+ */
+const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/invite", "/embed", "/docs"];
 
 /**
  * Optimistic navigation gate.

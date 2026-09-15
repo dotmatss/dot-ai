@@ -39,7 +39,7 @@ export function DocsToc({ headings }: { headings: DocHeading[] }) {
   return (
     <nav aria-label="On this page" className="hidden xl:block">
       <div className="sticky top-[calc(var(--spacing-topbar)+1.5rem)]">
-        <h2 className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-subtle">On this page</h2>
+        <h2 className="text-caption font-medium uppercase tracking-caption text-foreground-subtle">On this page</h2>
         <ul className="mt-3 flex flex-col gap-2 border-l border-border">
           {headings.map((heading) => (
             <li key={heading.id}>

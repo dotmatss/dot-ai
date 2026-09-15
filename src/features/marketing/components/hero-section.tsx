@@ -12,7 +12,7 @@ export function HeroSection() {
     <section className="border-b border-border bg-surface">
       <div className="mx-auto grid w-full max-w-6xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:items-center lg:gap-16 lg:px-8 lg:py-28">
         <div>
-          <p className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">
+          <p className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-caption font-medium uppercase tracking-caption text-foreground-muted">
             AI chatbots, agents and workflows
           </p>
 

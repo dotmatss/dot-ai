@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { axisLabelIndices } from "@/components/charts/axis";
 import { AnalyticsAreaChart, type AnalyticsChartPoint } from "@/features/analytics/components/analytics-area-chart";
 import { AnalyticsBarRows } from "@/features/analytics/components/analytics-bar-rows";
 
@@ -68,6 +69,20 @@ describe("AnalyticsAreaChart", () => {
     expect(screen.getByRole("table", { name: "Conversations" })).toBeInTheDocument();
   });
 
+  it("keeps type out of the scaled viewBox", () => {
+    // A viewBox multiplies every unit inside it by (rendered width / 640), so
+    // an 11px label in a full width card rendered at well over 20px. Labels are
+    // HTML now, and the plot no longer scales vertically at all.
+    const { container } = render(
+      <AnalyticsAreaChart id="chart" title="Conversations" points={POINTS} currentLabel="This period" height={220} />,
+    );
+
+    const plot = container.querySelector("svg[viewBox]");
+    expect(plot?.querySelector("text")).toBeNull();
+    expect(plot).toHaveAttribute("preserveAspectRatio", "none");
+    expect(plot).toHaveStyle({ height: "220px" });
+  });
+
   it("draws an all-zero period without collapsing the axis", () => {
     const { container } = render(
       <AnalyticsAreaChart
@@ -81,6 +96,33 @@ describe("AnalyticsAreaChart", () => {
     // niceCeil keeps a maximum of 1, so the line sits on the baseline.
     expect(container.querySelectorAll("polyline")[0]?.getAttribute("points")).toContain(",");
     expect(within(screen.getByRole("table", { name: "Conversations" })).getAllByText("0").length).toBeGreaterThan(0);
+  });
+});
+
+describe("axisLabelIndices", () => {
+  it("keeps every bucket when they all fit", () => {
+    expect(axisLabelIndices(7)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it("thins labels so 90 daily buckets do not collide", () => {
+    const indices = axisLabelIndices(90);
+    expect(indices).toHaveLength(8);
+    expect(indices[0]).toBe(0);
+    expect(indices.at(-1)).toBe(89);
+  });
+
+  it("never prints the last label on top of its neighbour", () => {
+    // 30 buckets step by 4, which would otherwise label both 28 and 29 - the
+    // "Sep 12" printed over "Sep 13" in the 30 day analytics view.
+    const indices = axisLabelIndices(30);
+    expect(indices).toContain(29);
+    expect(indices).not.toContain(28);
+  });
+
+  it("survives degenerate counts", () => {
+    expect(axisLabelIndices(0)).toEqual([]);
+    expect(axisLabelIndices(1)).toEqual([0]);
+    expect(axisLabelIndices(2)).toEqual([0, 1]);
   });
 });
 

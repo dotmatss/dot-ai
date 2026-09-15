@@ -1,20 +1,18 @@
 // @vitest-environment node
 /**
- * Exercises the integration and API key code paths against a real PostgreSQL,
+ * Exercises the integration code paths against a real PostgreSQL,
  * because the parts that can break here are the parts TypeScript cannot see:
  * the SQL itself, the jsonb round-trip, the ON CONFLICT upserts, and the
  * ON DELETE CASCADE that is what actually guarantees a disconnect destroys the
  * stored credential.
  *
- *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" npx vitest run integrations-persistence
+ *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" pnpm exec vitest run integrations-persistence
  *
  * Skipped when DATABASE_URL is absent, so the default suite stays hermetic.
  */
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { authenticateApiKey } from "@/features/integrations/server/api-key-auth";
-import { createApiKey, getApiKeys, revokeApiKey } from "@/features/integrations/server/api-key-service";
 import {
   connectIntegration,
   disconnectIntegration,
@@ -126,38 +124,5 @@ describe.skipIf(!connectionString)("integrations persistence", () => {
     expect(await getIntegrations(ids.workspaceId)).toHaveLength(0);
     const secrets = await admin.query("SELECT 1 FROM integration_secrets WHERE workspace_id = $1", [ids.workspaceId]);
     expect(secrets.rowCount).toBe(0);
-  });
-
-
-  it("mints a key that authenticates, resolves its workspace, and stops at revocation", async () => {
-    const actor = { workspaceId: ids.workspaceId, userId: ids.userId };
-    const { apiKey, secret } = await createApiKey(actor, { name: "Smoke test key" });
-
-    expect(secret.startsWith("dot_live_")).toBe(true);
-    const stored = await admin.query<{ key_hash: string }>("SELECT key_hash FROM api_keys WHERE id = $1", [apiKey.id]);
-    expect(stored.rows[0]!.key_hash).not.toContain(secret);
-
-    const request = new Request("https://app.example.com/api/v1/public/chat", {
-      method: "POST",
-      headers: { authorization: `Bearer ${secret}` },
-    });
-    expect(await authenticateApiKey(request)).toEqual({ workspaceId: ids.workspaceId, apiKeyId: apiKey.id });
-
-    // An unknown key resolves to nothing rather than to some workspace.
-    const unknown = new Request("https://app.example.com/api/v1/public/chat", {
-      method: "POST",
-      headers: { authorization: `Bearer dot_live_${"a".repeat(32)}` },
-    });
-    expect(await authenticateApiKey(unknown)).toBeNull();
-
-    await revokeApiKey(actor, apiKey.id);
-    expect(await authenticateApiKey(request)).toBeNull();
-
-    const revokedList = await getApiKeys(ids.workspaceId, { status: "revoked" });
-    expect(revokedList.items.map((item) => item.id)).toContain(apiKey.id);
-    expect(revokedList.items[0]?.revokedAt).toBeTypeOf("string");
-
-    const activeList = await getApiKeys(ids.workspaceId, { status: "active" });
-    expect(activeList.items.map((item) => item.id)).not.toContain(apiKey.id);
   });
 });

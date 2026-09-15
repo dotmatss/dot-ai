@@ -1,5 +1,11 @@
-import type { UpdateMemberRoleInput, UpdateProfileInput, UpdateWorkspaceNameInput } from "@/features/settings/schemas";
 import type {
+  InviteMemberInput,
+  UpdateMemberRoleInput,
+  UpdateProfileInput,
+  UpdateWorkspaceNameInput,
+} from "@/features/settings/schemas";
+import type {
+  InvitationCreated,
   MembersOverview,
   SessionRevocationResult,
   UserProfile,
@@ -33,6 +39,13 @@ export const settingsApi = {
     apiFetch<MembersOverview>(`${base(workspaceSlug)}/members/${userId}`, { method: "PATCH", json: input }),
   removeMember: (workspaceSlug: string, userId: string) =>
     apiFetch<MembersOverview>(`${base(workspaceSlug)}/members/${userId}`, { method: "DELETE" }),
+
+  // The invite URL comes back only here. Nothing re-reads it, because the
+  // server keeps a hash of the token and not the token.
+  inviteMember: (workspaceSlug: string, input: InviteMemberInput) =>
+    apiFetch<InvitationCreated>(`${base(workspaceSlug)}/invitations`, { method: "POST", json: input }),
+  revokeInvitation: (workspaceSlug: string, invitationId: string) =>
+    apiFetch<MembersOverview>(`${base(workspaceSlug)}/invitations/${invitationId}`, { method: "DELETE" }),
 
   sessions: (workspaceSlug: string) => apiFetch<UserSessionSummary[]>(`${base(workspaceSlug)}/sessions`),
   revokeSession: (workspaceSlug: string, sessionId: string) =>

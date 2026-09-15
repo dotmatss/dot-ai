@@ -12,8 +12,9 @@ import { AppButton, AppButtonLink } from "@/components/ui/app-button";
 import { AppCard } from "@/components/ui/app-card";
 import { AppCheckbox } from "@/components/ui/app-checkbox";
 import { AppSkeleton } from "@/components/ui/app-skeleton";
+import { ManagedByAgentNotice } from "@/features/chatbots/components/chatbot-ai-source-form";
 import { useUpdateChatbotMutation } from "@/features/chatbots/mutations";
-import { useChatbotKnowledgeQuery } from "@/features/chatbots/queries";
+import { useChatbotKnowledgeQuery, useChatbotQuery } from "@/features/chatbots/queries";
 import type { ChatbotKnowledgeOption } from "@/features/chatbots/types";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { canEdit } from "@/features/workspaces/roles";
@@ -93,9 +94,22 @@ function KnowledgeSelector({ chatbotId, options }: { chatbotId: string; options:
 export function ChatbotKnowledgePanel({ chatbotId }: { chatbotId: string }) {
   const { membership } = useWorkspace();
   const query = useChatbotKnowledgeQuery(chatbotId);
+  const chatbotQuery = useChatbotQuery(chatbotId);
 
-  if (query.isPending) return <AppSkeleton className="h-64" />;
+  if (query.isPending || chatbotQuery.isPending) return <AppSkeleton className="h-64" />;
   if (query.isError) return <AppErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (chatbotQuery.isError) return <AppErrorState error={chatbotQuery.error} onRetry={() => void chatbotQuery.refetch()} />;
+
+  // An agent-backed chatbot retrieves from the AGENT's collections, so the
+  // checkboxes below would edit a list nothing reads. The chatbot's own
+  // attachments are kept and become live again if it is unlinked.
+  if (chatbotQuery.data.agentId) {
+    return (
+      <AppCard>
+        <ManagedByAgentNotice chatbot={chatbotQuery.data} what="Knowledge" />
+      </AppCard>
+    );
+  }
 
   if (query.data.length === 0) {
     return (

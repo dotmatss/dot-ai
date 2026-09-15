@@ -4,7 +4,9 @@ import {
   assignableRoles,
   canAdministerMember,
   canChangeMemberRole,
+  canInviteMember,
   canRemoveMember,
+  canRevokeInvitation,
   MEMBER_RULE_MESSAGES,
   type MemberActor,
   type MemberSubject,
@@ -182,6 +184,57 @@ describe("assignableRoles", () => {
         const decision = canChangeMemberRole({ actor, subject: subject("member"), nextRole, ownerCount: 2 });
         expect(decision.allowed).toBe(true);
       }
+    }
+  });
+});
+
+describe("canInviteMember", () => {
+  it("refuses anyone who cannot manage members", () => {
+    for (const actor of [MEMBER, VIEWER]) {
+      const decision = canInviteMember({ actor, role: "member" });
+      expect(decision.allowed).toBe(false);
+      expect(reason(decision)).toBe(MEMBER_RULE_MESSAGES.inviteManageRequired);
+    }
+  });
+
+  it("lets an owner invite at any role", () => {
+    for (const role of MEMBER_ROLES) {
+      expect(canInviteMember({ actor: OWNER, role }).allowed).toBe(true);
+    }
+  });
+
+  it("stops an admin minting an owner", () => {
+    const decision = canInviteMember({ actor: ADMIN, role: "owner" });
+    expect(decision.allowed).toBe(false);
+    expect(reason(decision)).toBe(MEMBER_RULE_MESSAGES.inviteOwnerRequired);
+  });
+
+  it("lets an admin invite every role below owner", () => {
+    for (const role of MEMBER_ROLES.filter((candidate) => candidate !== "owner")) {
+      expect(canInviteMember({ actor: ADMIN, role }).allowed).toBe(true);
+    }
+  });
+
+  // The form only offers what assignableRoles returns, so the two must agree:
+  // an option the invite rule would refuse is a control that fails on click.
+  it("accepts every role the picker offers", () => {
+    for (const actorRole of MEMBER_ROLES) {
+      const actor: MemberActor = { userId: "actor", role: actorRole };
+      for (const role of assignableRoles(actorRole)) {
+        expect(canInviteMember({ actor, role }).allowed).toBe(true);
+      }
+    }
+  });
+});
+
+describe("canRevokeInvitation", () => {
+  it("requires managing members", () => {
+    expect(canRevokeInvitation({ actor: OWNER }).allowed).toBe(true);
+    expect(canRevokeInvitation({ actor: ADMIN }).allowed).toBe(true);
+    for (const actor of [MEMBER, VIEWER]) {
+      const decision = canRevokeInvitation({ actor });
+      expect(decision.allowed).toBe(false);
+      expect(reason(decision)).toBe(MEMBER_RULE_MESSAGES.inviteManageRequired);
     }
   });
 });

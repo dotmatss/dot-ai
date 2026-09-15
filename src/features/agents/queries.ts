@@ -11,6 +11,7 @@ export const agentKeys = {
   detail: (workspaceSlug: string, agentId: string) => [...agentKeys.all(workspaceSlug), "detail", agentId] as const,
   knowledge: (workspaceSlug: string, agentId: string) => [...agentKeys.detail(workspaceSlug, agentId), "knowledge"] as const,
   overview: (workspaceSlug: string, agentId: string) => [...agentKeys.detail(workspaceSlug, agentId), "overview"] as const,
+  delegates: (workspaceSlug: string, agentId: string) => [...agentKeys.detail(workspaceSlug, agentId), "delegates"] as const,
 };
 
 /** Shared query definitions so server prefetch and client hooks agree on keys. */
@@ -35,6 +36,11 @@ export const agentQueries = {
       queryKey: agentKeys.overview(workspaceSlug, agentId),
       queryFn: () => agentsApi.overview(workspaceSlug, agentId),
     }),
+  delegates: (workspaceSlug: string, agentId: string) =>
+    queryOptions({
+      queryKey: agentKeys.delegates(workspaceSlug, agentId),
+      queryFn: () => agentsApi.delegationCandidates(workspaceSlug, agentId),
+    }),
 };
 
 export function useAgentsQuery(filters: AgentListFilters) {
@@ -50,6 +56,11 @@ export function useAgentQuery(agentId: string) {
 export function useAgentKnowledgeQuery(agentId: string) {
   const { membership } = useWorkspace();
   return useQuery(agentQueries.knowledge(membership.workspace.slug, agentId));
+}
+
+export function useAgentDelegatesQuery(agentId: string) {
+  const { membership } = useWorkspace();
+  return useQuery(agentQueries.delegates(membership.workspace.slug, agentId));
 }
 
 export function useAgentOverviewQuery(agentId: string) {

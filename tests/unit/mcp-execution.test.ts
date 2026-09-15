@@ -22,6 +22,8 @@ const completeToolCall = vi.hoisted(() => vi.fn());
 vi.mock("@/features/mcp/server/mcp-repository", () => ({ loadServerBundles, insertToolCall, completeToolCall }));
 
 const callTool = vi.hoisted(() => vi.fn());
+const lifecycle = vi.hoisted(() => vi.fn());
+vi.mock("@/server/auth/lifecycle", () => ({ assertWorkspaceActive: lifecycle, assertUserActive: lifecycle }));
 vi.mock("@/features/mcp/server/mcp-client", () => ({ callTool }));
 
 const connectionFor = vi.hoisted(() => vi.fn());
@@ -108,12 +110,20 @@ function execute(overrides: Record<string, unknown> = {}) {
   });
 }
 
+it("blocks suspended tenants before obtaining credentials or invoking a tool", async () => {
+  lifecycle.mockRejectedValue(new Error("Workspace unavailable"));
+  await expect(execute()).rejects.toThrow("Workspace unavailable");
+  expect(connectionFor).not.toHaveBeenCalled();
+  expect(callTool).not.toHaveBeenCalled();
+});
+
 /** The status each recorded row was inserted with, in order. */
 function insertedStatuses(): string[] {
   return insertToolCall.mock.calls.map((call) => (call[0] as { status: string }).status);
 }
 
 beforeEach(() => {
+  lifecycle.mockReset().mockResolvedValue(undefined);
   loadServerBundles.mockReset();
   insertToolCall.mockReset();
   completeToolCall.mockReset();

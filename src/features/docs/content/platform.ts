@@ -277,6 +277,47 @@ export const PLATFORM_PAGES: DocPage[] = [
     ],
   },
   {
+    slug: "intelligence",
+    title: "Intelligence",
+    description: "What people asked, what was answered, and what your knowledge base is missing.",
+    blocks: [
+      {
+        type: "paragraph",
+        text: "Conversation Intelligence reads the conversations you already have and groups them into topics, so you can see what people keep asking rather than how many messages were sent. Run an analysis from the Intelligence page; it reads the last 30 days by default.",
+      },
+      { type: "heading", id: "outcomes", text: "How a conversation is scored" },
+      {
+        type: "table",
+        head: ["Outcome", "Meaning"],
+        rows: [
+          ["Contained", "Resolved with no reply from a team member."],
+          ["Handed off", "A team member replied in the thread."],
+          ["Escalated", "Marked for a person and not yet answered."],
+          ["Unresolved", "Still open, with nobody assigned."],
+        ],
+      },
+      {
+        type: "paragraph",
+        text: "A reply written by a team member counts as a hand-off however the conversation is later marked. Containment is meant to describe what the assistant did, so it is read from the messages rather than from the status somebody set afterwards.",
+      },
+      { type: "heading", id: "coverage", text: "Knowledge coverage" },
+      {
+        type: "paragraph",
+        text: "A conversation is covered when at least one reply in it cited a knowledge source. A reply with no citation was produced from the model's own general knowledge, which is the answer nobody can verify or correct. A topic where most conversations went uncited is flagged as a knowledge gap.",
+      },
+      { type: "heading", id: "drafting", text: "Drafting an article" },
+      {
+        type: "paragraph",
+        text: "From a topic you can draft a knowledge article. The model is given the questions and not the answers, and is instructed never to invent one, so what you get is the structure — the questions grouped and deduplicated, each marked ANSWER NEEDED — for somebody who knows the answers to complete. Drafts are filed as Unorganized by default, where no agent can retrieve them until you file them into a collection.",
+      },
+      { type: "heading", id: "freshness", text: "Freshness" },
+      {
+        type: "paragraph",
+        text: "Every figure on the page comes from the last analysis, and the page says when that ran. Nothing here updates as conversations arrive; run the analysis again to bring it up to date.",
+      },
+    ],
+  },
+  {
     slug: "crm",
     title: "CRM",
     description: "Contacts, stages, tags, notes and activity, linked to conversations.",
@@ -345,7 +386,7 @@ export const PLATFORM_PAGES: DocPage[] = [
         type: "callout",
         tone: "info",
         title: "Looking for API keys?",
-        body: "Workspace API keys live under Integrations → API keys and are documented in [API authentication](/docs/api/authentication).",
+        body: "Workspace API keys live under Developer → API keys and are documented in [API authentication](/docs/api/authentication).",
       },
     ],
   },

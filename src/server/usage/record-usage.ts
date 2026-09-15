@@ -1,16 +1,25 @@
 import "server-only";
 
-import { query, type Queryable } from "@/server/db/client";
+import type { PoolClient } from "pg";
+
+import { withDb } from "@/server/db/client";
+import { usageEvents } from "@/server/db/schema";
 
 export type UsageKind = "message" | "tokens_in" | "tokens_out" | "workflow_run" | "embedding" | "retrieval";
 
 export async function recordUsage(
   input: { workspaceId: string; kind: UsageKind; quantity?: number; refType?: string; refId?: string | null },
-  client?: Queryable,
+  client?: PoolClient,
 ): Promise<void> {
-  await query(
-    `INSERT INTO usage_events (workspace_id, kind, quantity, ref_type, ref_id) VALUES ($1, $2, $3, $4, $5)`,
-    [input.workspaceId, input.kind, input.quantity ?? 1, input.refType ?? null, input.refId ?? null],
+  await withDb(
+    (db) =>
+      db.insert(usageEvents).values({
+        workspaceId: input.workspaceId,
+        kind: input.kind,
+        quantity: BigInt(input.quantity ?? 1),
+        refType: input.refType ?? null,
+        refId: input.refId ?? null,
+      }),
     client,
   );
 }
@@ -18,14 +27,20 @@ export async function recordUsage(
 export async function recordUsageBatch(
   workspaceId: string,
   events: Array<{ kind: UsageKind; quantity: number; refType?: string; refId?: string | null }>,
-  client?: Queryable,
+  client?: PoolClient,
 ): Promise<void> {
   if (events.length === 0) return;
-  const values: unknown[] = [];
-  const rows = events.map((event, index) => {
-    const base = index * 5;
-    values.push(workspaceId, event.kind, event.quantity, event.refType ?? null, event.refId ?? null);
-    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
-  });
-  await query(`INSERT INTO usage_events (workspace_id, kind, quantity, ref_type, ref_id) VALUES ${rows.join(", ")}`, values, client);
+  await withDb(
+    (db) =>
+      db.insert(usageEvents).values(
+        events.map((event) => ({
+          workspaceId,
+          kind: event.kind,
+          quantity: BigInt(event.quantity),
+          refType: event.refType ?? null,
+          refId: event.refId ?? null,
+        })),
+      ),
+    client,
+  );
 }

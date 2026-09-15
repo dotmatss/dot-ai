@@ -2,6 +2,8 @@
 
 Every product domain lives in `src/features/<feature>/` and follows the same layered shape. The **chatbots** feature is the reference implementation; copy its structure rather than inventing a new one.
 
+Two features are easy to confuse and worth naming here: `integrations/` is **outbound** (the catalogue, outbound credentials, MCP - what this workspace calls) and `developer/` is **inbound** (API keys, embeds, the public API contract - what calls this workspace).
+
 ```text
 src/features/<feature>/
   types.ts          client-safe domain contracts (dates are ISO strings, never Date)
@@ -67,7 +69,7 @@ CREATE POLICY <t>_workspace_isolation ON <t>
 - Keep writing explicit `eq(table.workspaceId, workspaceId)` on every tenant read and write. Drizzle is a typing layer, not an authorization layer.
 - Build a dynamic `where` once and reuse it for the page query and the count, so the two cannot drift.
 - Leave SQL-shaped queries as SQL: date-window aggregates, `generate_series` zero-fill, `ts_rank_cd` ranking. `src/features/chatbots/server/chatbot-repository.ts` is the reference for where the line falls.
-- Schema changes: edit the TypeScript, `npm run db:generate`, read the diff in `drizzle/`, then copy the reviewed statements into a new numbered migration and append the RLS block below. `drizzle-kit push` is not available on purpose.
+- Schema changes: edit the TypeScript, `pnpm db:generate`, read the diff in `drizzle/`, then copy the reviewed statements into a new numbered migration and append the RLS block below. `drizzle-kit push` is not available on purpose.
 
 **Public surfaces**
 - Anything reachable without a session is tenant-less by construction, not by checking. Give it no workspace id in its request contract, and keep its module graph away from `src/server/db`, repositories, `src/server/auth` and anything holding a credential. Assert it: `tests/unit/public-chatbot-isolation.test.ts` walks the import graph of the public demo and fails on the first forbidden edge.
@@ -88,7 +90,8 @@ CREATE POLICY <t>_workspace_isolation ON <t>
 **Crossing feature boundaries**
 - A feature never writes SQL over another feature's tables. If feature A needs a view of feature B's data, B exports a named read model from its own `server/` folder and A imports it. `listEmbedDeployments()` in `src/features/chatbots/server/embed-deployments.ts` is the reference: the developer area renders it, but the rules about what makes a chatbot reachable stay owned by the chatbots feature.
 - Shared display metadata is imported, not copied. The settings Usage page reads `USAGE_KIND_META` from the analytics feature rather than restating the labels.
-- A new developer-facing surface extends the existing area it belongs to. API keys and embeds are tabs under Integrations, not a parallel "Developer" section with its own layout, tabs and conventions.
+- A new surface extends the existing area it belongs to rather than starting a parallel section with its own layout, tabs and conventions. Credentials is a tab under Integrations, not a "Secrets" area of its own.
+- The exception is a surface that means the **opposite** of the area it sits in. API keys and embeds were tabs under Integrations until the outbound credential store arrived and "API keys" and "Credentials" became neighbouring tabs meaning opposite things. They now live under `src/features/developer/` and `/w/[slug]/developer`. The rule the split follows: **Integrations is outbound** (catalogue, credentials, MCP - what this workspace calls), **Developer is inbound** (API keys, embeds - what calls this workspace). A new surface joins whichever direction it belongs to.
 
 **Client state**
 - Server data: TanStack Query only. Keys: `<feature>Keys.all(slug)`, `.lists(slug)`, `.list(slug, filters)`, `.detail(slug, id)`. Server pages seed the cache with `queryClient.setQueryData(key, data)` and wrap in `<HydrateClient>`.

@@ -1,7 +1,9 @@
 import "server-only";
 
+import { and, desc, eq, gte, ne, sql } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
+
 import type {
-  ActivityEntry,
   ChatbotPerformanceRow,
   CrmActivitySummary,
   DashboardStats,
@@ -9,12 +11,29 @@ import type {
   UsageSummary,
   WorkflowActivitySummary,
 } from "@/features/dashboard/types";
-import { query, queryOne } from "@/server/db/client";
+import { query, queryOne, withDb } from "@/server/db/client";
+import { chatbots, contacts, conversations, messages, usageEvents, workflowRuns, workflows } from "@/server/db/schema";
 import { toIso, toIsoRequired } from "@/server/db/sql";
+
+/** Connection-less builder, used only to COMPOSE correlated subqueries. */
+const qb = new QueryBuilder();
 
 /**
  * Read-only aggregates for the workspace dashboard. Each function backs one
  * dashboard section so sections can stream independently.
+ *
+ * ── Why some statements here are still raw SQL ──────────────────────────────
+ *
+ * The tile counters return a dozen unrelated `count(*)`s in ONE round trip,
+ * which makes them SELECTs with no FROM clause; Drizzle's select builder
+ * requires a table to select from, so expressing them through it means one
+ * statement per number - a dozen concurrent statements per dashboard against a
+ * pool of ten. The daily-messages series is a `generate_series` CTE, which is
+ * a set-returning function in the FROM clause and has no builder equivalent.
+ *
+ * Everything with a real FROM - the usage totals, the chatbot table, the
+ * recent-run and recent-contact lists - is an ordinary Drizzle query. Both
+ * exceptions are recorded in `docs/drizzle-orm-migration-plan.md`.
  */
 
 export async function getDashboardStats(workspaceId: string): Promise<DashboardStats> {
@@ -58,64 +77,76 @@ export async function getUsageSummary(workspaceId: string, days = 14): Promise<U
        FROM days ORDER BY days.day`,
       [workspaceId, days],
     ),
-    queryOne<{ tokens_in: string; tokens_out: string; messages: string }>(
-      `SELECT
-         coalesce(sum(quantity) FILTER (WHERE kind = 'tokens_in'), 0) AS tokens_in,
-         coalesce(sum(quantity) FILTER (WHERE kind = 'tokens_out'), 0) AS tokens_out,
-         coalesce(sum(quantity) FILTER (WHERE kind = 'message'), 0) AS messages
-       FROM usage_events WHERE workspace_id = $1 AND occurred_at >= now() - interval '30 days'`,
-      [workspaceId],
+    // One pass over the window, with the three metrics separated by `FILTER`.
+    withDb((db) =>
+      db
+        .select({
+          tokensIn: sql<number>`coalesce(sum(${usageEvents.quantity}) FILTER (WHERE ${usageEvents.kind} = 'tokens_in'), 0)`.mapWith(Number),
+          tokensOut:
+            sql<number>`coalesce(sum(${usageEvents.quantity}) FILTER (WHERE ${usageEvents.kind} = 'tokens_out'), 0)`.mapWith(Number),
+          messages: sql<number>`coalesce(sum(${usageEvents.quantity}) FILTER (WHERE ${usageEvents.kind} = 'message'), 0)`.mapWith(Number),
+        })
+        .from(usageEvents)
+        .where(and(eq(usageEvents.workspaceId, workspaceId), gte(usageEvents.occurredAt, sql`now() - interval '30 days'`))),
     ),
   ]);
   return {
     dailyMessages: daily.map((row) => ({ date: row.day, count: Number(row.count) })),
-    tokensInLast30Days: Number(totals?.tokens_in ?? 0),
-    tokensOutLast30Days: Number(totals?.tokens_out ?? 0),
-    messagesLast30Days: Number(totals?.messages ?? 0),
+    tokensInLast30Days: totals[0]?.tokensIn ?? 0,
+    tokensOutLast30Days: totals[0]?.tokensOut ?? 0,
+    messagesLast30Days: totals[0]?.messages ?? 0,
   };
 }
 
-export async function getRecentActivity(workspaceId: string, limit = 10): Promise<ActivityEntry[]> {
-  const rows = await query<{
-    id: string;
-    actor_name: string | null;
-    entity_type: string;
-    entity_id: string | null;
-    action: string;
-    summary: string;
-    created_at: Date;
-  }>(
-    `SELECT a.id::text AS id, u.name AS actor_name, a.entity_type, a.entity_id, a.action, a.summary, a.created_at
-     FROM activity_log a LEFT JOIN users u ON u.id = a.actor_id
-     WHERE a.workspace_id = $1 ORDER BY a.created_at DESC LIMIT $2`,
-    [workspaceId, limit],
-  );
-  return rows.map((row) => ({
-    id: row.id,
-    actorName: row.actor_name,
-    entityType: row.entity_type,
-    entityId: row.entity_id,
-    action: row.action,
-    summary: row.summary,
-    createdAt: toIsoRequired(row.created_at),
-  }));
-}
+/*
+ * Recent activity used to be read here. It now lives in the audit feature,
+ * which owns `activity_log` and its filtered read model: two queries over one
+ * table, in two features, is exactly the drift the conventions warn about.
+ * See `listRecentActivity` in `src/features/audit/server/audit-service.ts`.
+ */
 
 export async function getChatbotPerformance(workspaceId: string, limit = 5): Promise<ChatbotPerformanceRow[]> {
-  const rows = await query<{ id: string; name: string; status: string; conversations: string; messages: string }>(
-    `SELECT cb.id, cb.name, cb.status,
-            (SELECT count(*) FROM conversations c WHERE c.chatbot_id = cb.id AND c.created_at >= now() - interval '7 days') AS conversations,
-            (SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.chatbot_id = cb.id AND m.created_at >= now() - interval '7 days') AS messages
-     FROM chatbots cb WHERE cb.workspace_id = $1 AND cb.status <> 'archived'
-     ORDER BY conversations DESC, cb.updated_at DESC LIMIT $2`,
-    [workspaceId, limit],
+  const rows = await withDb((db) =>
+    db
+      .select({
+        id: chatbots.id,
+        name: chatbots.name,
+        status: chatbots.status,
+        // Composed rather than templated: in a select list with no join Drizzle
+        // drops the table name from an interpolated column, which would turn
+        // the correlation into `"chatbot_id" = "id"` inside the subquery.
+        // `.as()` is required, not decorative: Drizzle does not emit an AS
+        // clause for a select field on its own, so ordering by the name below
+        // would fail with `column "conversations" does not exist`.
+        conversations: sql<number>`${qb
+          .select({ c: sql`count(*)` })
+          .from(conversations)
+          .where(
+            and(eq(conversations.chatbotId, chatbots.id), gte(conversations.createdAt, sql`now() - interval '7 days'`)),
+          )}`
+          .mapWith(Number)
+          .as("conversations"),
+        messages: sql<number>`${qb
+          .select({ c: sql`count(*)` })
+          .from(messages)
+          .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+          .where(and(eq(conversations.chatbotId, chatbots.id), gte(messages.createdAt, sql`now() - interval '7 days'`)))}`
+          .mapWith(Number)
+          .as("messages"),
+      })
+      .from(chatbots)
+      .where(and(eq(chatbots.workspaceId, workspaceId), ne(chatbots.status, "archived")))
+      // Ordered by the output column, so the busiest chatbot leads without the
+      // subquery being evaluated a second time.
+      .orderBy(sql`conversations DESC`, desc(chatbots.updatedAt))
+      .limit(limit),
   );
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
     status: row.status,
-    conversationsLast7Days: Number(row.conversations),
-    messagesLast7Days: Number(row.messages),
+    conversationsLast7Days: row.conversations,
+    messagesLast7Days: row.messages,
   }));
 }
 
@@ -144,11 +175,21 @@ export async function getWorkflowActivity(workspaceId: string): Promise<Workflow
          (SELECT count(*) FROM workflow_runs WHERE workspace_id = $1 AND status = 'failed' AND created_at >= now() - interval '7 days') AS failed`,
       [workspaceId],
     ),
-    query<{ id: string; workflow_id: string; workflow_name: string; status: string; started_at: Date | null; finished_at: Date | null }>(
-      `SELECT r.id, r.workflow_id, w.name AS workflow_name, r.status, r.started_at, r.finished_at
-       FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id
-       WHERE r.workspace_id = $1 ORDER BY r.created_at DESC LIMIT 5`,
-      [workspaceId],
+    withDb((db) =>
+      db
+        .select({
+          id: workflowRuns.id,
+          workflowId: workflowRuns.workflowId,
+          workflowName: workflows.name,
+          status: workflowRuns.status,
+          startedAt: workflowRuns.startedAt,
+          finishedAt: workflowRuns.finishedAt,
+        })
+        .from(workflowRuns)
+        .innerJoin(workflows, eq(workflows.id, workflowRuns.workflowId))
+        .where(eq(workflowRuns.workspaceId, workspaceId))
+        .orderBy(desc(workflowRuns.createdAt))
+        .limit(5),
     ),
   ]);
   const n = (key: string) => Number(counts?.[key] ?? 0);
@@ -159,11 +200,11 @@ export async function getWorkflowActivity(workspaceId: string): Promise<Workflow
     failedLast7Days: n("failed"),
     recentRuns: runs.map((run) => ({
       id: run.id,
-      workflowId: run.workflow_id,
-      workflowName: run.workflow_name,
+      workflowId: run.workflowId,
+      workflowName: run.workflowName,
       status: run.status,
-      startedAt: toIso(run.started_at),
-      finishedAt: toIso(run.finished_at),
+      startedAt: toIso(run.startedAt),
+      finishedAt: toIso(run.finishedAt),
     })),
   };
 }
@@ -178,9 +219,19 @@ export async function getCrmActivity(workspaceId: string): Promise<CrmActivitySu
          (SELECT count(*) FROM contacts WHERE workspace_id = $1 AND created_at >= now() - interval '7 days') AS new_7`,
       [workspaceId],
     ),
-    query<{ id: string; name: string | null; email: string | null; stage: string; created_at: Date }>(
-      `SELECT id, name, email, stage, created_at FROM contacts WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 5`,
-      [workspaceId],
+    withDb((db) =>
+      db
+        .select({
+          id: contacts.id,
+          name: contacts.name,
+          email: contacts.email,
+          stage: contacts.stage,
+          createdAt: contacts.createdAt,
+        })
+        .from(contacts)
+        .where(eq(contacts.workspaceId, workspaceId))
+        .orderBy(desc(contacts.createdAt))
+        .limit(5),
     ),
   ]);
   const n = (key: string) => Number(counts?.[key] ?? 0);
@@ -189,6 +240,6 @@ export async function getCrmActivity(workspaceId: string): Promise<CrmActivitySu
     leads: n("leads"),
     customers: n("customers"),
     newLast7Days: n("new_7"),
-    recentContacts: recent.map((row) => ({ id: row.id, name: row.name, email: row.email, stage: row.stage, createdAt: toIsoRequired(row.created_at) })),
+    recentContacts: recent.map((row) => ({ id: row.id, name: row.name, email: row.email, stage: row.stage, createdAt: toIsoRequired(row.createdAt) })),
   };
 }

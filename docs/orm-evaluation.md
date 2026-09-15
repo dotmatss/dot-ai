@@ -99,7 +99,7 @@ Steps 1–3 and 6 are complete. Step 5 is deliberately incremental.
 | 1. Install | Done | `drizzle-orm` (zero transitive dependencies) and `drizzle-kit` (dev only). `pg` remains the driver, through `drizzle-orm/node-postgres`. The dev-only advisory carried by drizzle-kit is recorded in `dependencies.md` |
 | 2. Describe the schema | Done | `src/server/db/schema/` — 25 tables, 13 enums, the `citext` custom type, transcribed by hand from the migrations |
 | 3. Keep the boundary | Done | `query`, `queryOne`, `withTransaction` and `withWorkspace` are **unchanged**. `client.ts` additionally exports `getDb()`, `dbFor(client)` and `withDb(fn, client?)` |
-| 4. Future schema changes | Wired | `npm run db:generate` writes to `drizzle/` for review; the reviewed SQL is copied into a numbered migration with the RLS block appended. `drizzle-kit push` is deliberately **not** wired up |
+| 4. Future schema changes | Wired | `pnpm db:generate` writes to `drizzle/` for review; the reviewed SQL is copied into a numbered migration with the RLS block appended. `drizzle-kit push` is deliberately **not** wired up |
 | 5. Migrate repositories | 1 of 10 | `src/features/chatbots/server/chatbot-repository.ts` is the reference. The other nine still use `query`/`queryOne` and work exactly as before |
 | 6. Prove no drift | Done | `tests/unit/schema-drift.integration.test.ts` compares every table, column, type, nullability and enum — in both directions — against the live database |
 

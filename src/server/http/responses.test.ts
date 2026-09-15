@@ -78,6 +78,52 @@ describe("toErrorResponse", () => {
   });
 });
 
+describe("retry guidance", () => {
+  it("emits Retry-After for a refusal that carries it", () => {
+    const response = fail(ApiError.rateLimited("Rate limit exceeded. Retry in 30s.", 30));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("30");
+  });
+
+  it("reaches the header even when the error is thrown deep in a service", () => {
+    // The guidance rides on the error rather than being passed to the response
+    // helper, so a service several frames below a route keeps it.
+    const response = toErrorResponse(ApiError.concurrencyLimit(undefined, 5));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("5");
+  });
+
+  it("never emits a zero, which would read as retry immediately", () => {
+    expect(fail(ApiError.rateLimited("soon", 0)).headers.get("Retry-After")).toBe("1");
+    expect(fail(ApiError.rateLimited("soon", 0.2)).headers.get("Retry-After")).toBe("1");
+  });
+
+  it("omits the header where there is no honest answer", () => {
+    // An exhausted monthly quota does not come back in seconds, and a header
+    // promising otherwise would invite the hammering it should prevent.
+    expect(fail(ApiError.quotaExceeded()).headers.get("Retry-After")).toBeNull();
+    expect(fail(ApiError.forbidden()).headers.get("Retry-After")).toBeNull();
+  });
+
+  it("keeps the four protection refusals distinguishable", async () => {
+    // A client that cannot tell these apart can only guess, and usually guesses
+    // "retry harder" - which is wrong for three of the four.
+    const cases = [
+      [ApiError.rateLimited(), "rate_limited", 429],
+      [ApiError.quotaExceeded(), "quota_exceeded", 429],
+      [ApiError.concurrencyLimit(), "concurrency_limit", 429],
+      [ApiError.notEntitled(), "not_entitled", 403],
+      [ApiError.suspended(), "suspended", 403],
+    ] as const;
+
+    for (const [error, code, status] of cases) {
+      const response = fail(error);
+      expect(response.status).toBe(status);
+      await expect(body(response)).resolves.toMatchObject({ error: { code } });
+    }
+  });
+});
+
 describe("fail", () => {
   it("serialises validation detail for the form layer", async () => {
     const response = fail(ApiError.validation({ email: ["Enter a valid email address"] }));

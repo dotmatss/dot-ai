@@ -6,7 +6,7 @@
  *
  * Skipped automatically when DATABASE_URL is not configured, so the suite still
  * runs on a machine without a database:
- *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" npx vitest run chatbot-chat
+ *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" pnpm exec vitest run chatbot-chat
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 

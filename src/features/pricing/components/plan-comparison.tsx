@@ -76,7 +76,7 @@ export function PlanComparison({ plans = PLANS }: { plans?: ReadonlyArray<Plan> 
                 <AppTableRow>
                   <AppTableCell
                     colSpan={plans.length + 1}
-                    className="bg-surface-muted text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted"
+                    className="bg-surface-muted text-caption font-medium uppercase tracking-caption text-foreground-muted"
                   >
                     {group.title}
                   </AppTableCell>

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { PoolClient } from "pg";
+
 import { describePropertyChange, describeTagChange, diffProperties, formatList, hasPropertyChange } from "@/features/crm/changes";
 import { CONTACT_STAGE_META } from "@/features/crm/constants";
 import { contactDisplayName, normalizeEmail, normalizeProperties, normalizeTags } from "@/features/crm/normalize";
@@ -35,7 +37,7 @@ import { canManage } from "@/features/workspaces/roles";
 import { ApiError } from "@/lib/api/api-error";
 import { recordActivity } from "@/server/activity/activity-log";
 import type { WorkspaceContext } from "@/server/auth/dal";
-import { withWorkspace, type Queryable } from "@/server/db/client";
+import { withWorkspace } from "@/server/db/client";
 import type { Paginated } from "@/types/pagination";
 
 export interface ActorContext {
@@ -130,7 +132,7 @@ async function assertEmailAvailable(
   workspaceId: string,
   email: string | null,
   excludeContactId: string | null,
-  client?: Queryable,
+  client?: PoolClient,
 ): Promise<void> {
   if (!email) return;
   const existingId = await findContactIdByEmail(workspaceId, email, client);
@@ -244,7 +246,7 @@ async function recordContactChanges(
   before: Contact,
   after: Contact,
   patch: ContactPatch,
-  client: Queryable,
+  client: PoolClient,
 ): Promise<void> {
   const actor = { actorId: ctx.userId, actorName: ctx.actorName };
   const changedLabels: string[] = [];

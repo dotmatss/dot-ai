@@ -1,3 +1,4 @@
+import { assertWorkspaceActive, assertUserActive } from "@/server/auth/lifecycle";
 import "server-only";
 
 import { randomBytes } from "node:crypto";
@@ -122,6 +123,8 @@ function storableResult(output: McpToolCallOutput): Record<string, unknown> {
 }
 
 export async function executeMcpToolCall(input: ExecuteMcpToolInput): Promise<McpExecutionOutcome> {
+  await assertWorkspaceActive(input.workspaceId);
+  if (input.requestedBy) await assertUserActive(input.requestedBy);
   const parsed = parseToolRef(input.toolRef);
 
   // A reference we cannot parse names nothing. Recorded anyway: something
@@ -301,6 +304,15 @@ interface RunCallInput {
  * request, made after a person said yes, and recorded against the same row.
  */
 export async function runCall(input: RunCallInput): Promise<McpExecutionOutcome> {
+  try {
+    await assertWorkspaceActive(input.workspaceId);
+  } catch (error) {
+    await repository.completeToolCall(input.workspaceId, input.callId, {
+      status: "failed", result: null, resultBytes: null, resultTruncated: false,
+      isError: false, errorMessage: "Workspace access could not be verified", durationMs: 0,
+    });
+    throw error;
+  }
   const started = Date.now();
 
   const config = await connectionFor(input.workspaceId, input.serverId, input.endpointUrl, input.authKind);

@@ -56,7 +56,7 @@ export function ChatbotApiCard({
         </AppText>
         <div className="flex flex-wrap gap-2">
           <AppButtonLink
-            href={`/w/${workspaceSlug}/integrations/api-keys` as Route}
+            href={`/w/${workspaceSlug}/developer` as Route}
             variant="secondary"
             size="sm"
             leadingIcon={<KeyRound aria-hidden />}

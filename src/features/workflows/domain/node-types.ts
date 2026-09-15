@@ -9,6 +9,7 @@ import {
   Sparkles,
   Tags,
   UserPlus,
+  Bot,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -22,13 +23,14 @@ import { z } from "zod";
  * both Server and Client Components.
  */
 
-export const NODE_CATEGORIES = ["trigger", "input", "ai", "condition", "tool", "action", "output"] as const;
+export const NODE_CATEGORIES = ["trigger", "input", "ai", "agent", "condition", "tool", "action", "output"] as const;
 export type NodeCategory = (typeof NODE_CATEGORIES)[number];
 
 export const NODE_CATEGORY_META: Record<NodeCategory, { label: string; description: string }> = {
   trigger: { label: "Triggers", description: "Start a run." },
   input: { label: "Input", description: "Collect values before the run continues." },
   ai: { label: "AI", description: "Generate or classify text with a model." },
+  agent: { label: "Agents", description: "Hand a task to one of your agents." },
   condition: { label: "Logic", description: "Branch on run variables." },
   tool: { label: "Tools", description: "Call an external system." },
   action: { label: "Actions", description: "Change data or notify people." },
@@ -42,6 +44,7 @@ export const WORKFLOW_NODE_TYPES = [
   "input.form",
   "ai.generate",
   "ai.classify",
+  "agent.run",
   "condition.branch",
   "tool.http_request",
   "action.create_contact",
@@ -66,7 +69,22 @@ export const CONDITION_OPERATOR_LABELS: Record<ConditionOperator, string> = {
  * always the node type configSchema; a descriptor only decides which App*
  * control a field gets, so a canvas builder can reuse the same descriptors.
  */
-export type NodeConfigControl = "text" | "template" | "textarea" | "number" | "select" | "switch" | "lines" | "headers";
+/**
+ * `agent` and `credential` are selects whose options are fetched by the form
+ * rather than listed here: a registry entry is static, and which agents or
+ * credentials a workspace has is not.
+ */
+export type NodeConfigControl =
+  | "text"
+  | "template"
+  | "textarea"
+  | "number"
+  | "select"
+  | "switch"
+  | "lines"
+  | "headers"
+  | "agent"
+  | "credential";
 
 export interface NodeConfigFieldDescriptor {
   name: string;
@@ -167,6 +185,18 @@ export const aiGenerateConfigSchema = z.object({
   outputKey: variableKeySchema.default("generated"),
 });
 
+/**
+ * `agentId` accepts empty so a step can be added before an agent is chosen; the
+ * executor refuses to run the step until one is. The id is a request, not an
+ * authorization - the server reloads the agent through the run's own workspace
+ * and an id from anywhere else resolves to nothing.
+ */
+export const agentRunConfigSchema = z.object({
+  agentId: z.union([z.literal(""), z.uuid({ error: "Choose an agent" })]).default(""),
+  task: z.string().trim().min(1, { error: "Describe the task" }).max(8000),
+  outputKey: variableKeySchema.default("agentAnswer"),
+});
+
 export const aiClassifyConfigSchema = z.object({
   input: z.string().trim().min(1, { error: "Enter the text to classify" }).max(4000),
   categories: z
@@ -189,6 +219,15 @@ export const branchConfigSchema = z.object({
 export const httpRequestConfigSchema = z.object({
   url: z.string().trim().min(1, { error: "Enter a URL" }).max(2000),
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
+  /**
+   * A stored credential from Integrations -> Credentials, by id.
+   *
+   * The definition holds a REFERENCE, never a value. That is the whole point:
+   * a workflow definition is authored data that is read back into the builder,
+   * exported, duplicated and diffed, and a token pasted into `headers` below
+   * would travel with it every time. Empty means the step sends no credential.
+   */
+  credentialId: z.union([z.uuid(), z.literal("")]).default(""),
   headers: z.record(z.string().trim().min(1).max(100), z.string().max(1000)).default({}),
   bodyTemplate: z.string().max(8000).default(""),
   allowOutbound: z.boolean().default(false),
@@ -403,6 +442,35 @@ export const NODE_TYPES: Record<WorkflowNodeType, NodeTypeDefinition> = {
     inputs: [IN_PORT],
     outputs: [NEXT_PORT],
   },
+  "agent.run": {
+    id: "agent.run",
+    category: "agent",
+    label: "Run agent",
+    description: "Hand a task to one of this workspace's agents and collect its answer.",
+    icon: Bot,
+    configSchema: agentRunConfigSchema,
+    defaultConfig: { agentId: "", task: "{{trigger.message}}", outputKey: "agentAnswer" },
+    fields: [
+      {
+        name: "agentId",
+        label: "Agent",
+        control: "agent",
+        description:
+          "Runs with its own instructions, knowledge and built-in tools. MCP tools do not run inside a workflow, and the agent receives only the task below.",
+      },
+      {
+        name: "task",
+        label: "Task",
+        control: "template",
+        description: TEMPLATE_HINT,
+        rows: 5,
+        placeholder: "Research the question in {{trigger.message}} and summarise what you find.",
+      },
+      { name: "outputKey", label: "Store answer as", control: "text", description: "Available downstream as {{vars.key}}." },
+    ],
+    inputs: [IN_PORT],
+    outputs: [NEXT_PORT],
+  },
   "condition.branch": {
     id: "condition.branch",
     category: "condition",
@@ -438,6 +506,7 @@ export const NODE_TYPES: Record<WorkflowNodeType, NodeTypeDefinition> = {
     defaultConfig: {
       url: "https://api.example.com/hooks/lead",
       method: "POST",
+      credentialId: "",
       headers: {},
       bodyTemplate: "",
       allowOutbound: false,
@@ -464,7 +533,20 @@ export const NODE_TYPES: Record<WorkflowNodeType, NodeTypeDefinition> = {
           { value: "DELETE", label: "DELETE" },
         ],
       },
-      { name: "headers", label: "Headers", control: "headers", description: "One “Name: value” pair per line.", rows: 3 },
+      {
+        name: "credentialId",
+        label: "Credential",
+        control: "credential",
+        description:
+          "Optional. The stored value is attached by the server when the step runs; it is never part of this definition.",
+      },
+      {
+        name: "headers",
+        label: "Headers",
+        control: "headers",
+        description: "One “Name: value” pair per line. For anything secret, use a credential instead.",
+        rows: 3,
+      },
       { name: "bodyTemplate", label: "Body", control: "template", description: TEMPLATE_HINT, rows: 5 },
       {
         name: "allowOutbound",

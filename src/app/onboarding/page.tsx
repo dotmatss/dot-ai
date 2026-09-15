@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Route } from "next";
 import Link from "next/link";
 
 import { BrandMark } from "@/components/layout/brand-logo";
@@ -7,12 +7,16 @@ import { AppHeading } from "@/components/ui/app-typography";
 import { CreateWorkspaceForm } from "@/features/workspaces/components/create-workspace-form";
 import { listUserOrganizations } from "@/features/workspaces/server/workspace-repository";
 import { requireAuthOrRedirect } from "@/server/auth/dal";
+import { getPlatformGrant } from "@/server/auth/platform-dal";
 
 export const metadata: Metadata = { title: "Create workspace" };
 
 export default async function OnboardingPage() {
   const auth = await requireAuthOrRedirect("/onboarding");
-  const organizations = (await listUserOrganizations(auth.user.id)).filter((org) => org.role === "owner" || org.role === "admin");
+  const [organizations, platformGrant] = await Promise.all([
+    listUserOrganizations(auth.user.id).then((orgs) => orgs.filter((org) => org.role === "owner" || org.role === "admin")),
+    getPlatformGrant(auth.user.id),
+  ]);
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
@@ -33,6 +37,22 @@ export default async function OnboardingPage() {
             </p>
           </div>
           {organizations.length > 0 ? <CreateWorkspaceForm organizations={organizations} /> : null}
+          {/*
+            A dedicated platform operator belongs to no organization, so this
+            page is otherwise a dead end for them: no form, and a message about
+            not being an admin anywhere. The link is rendered only for an
+            account that already holds the grant, so it discloses nothing to
+            anyone else - and it is a link, not an authorization.
+          */}
+          {platformGrant ? (
+            <p className={organizations.length > 0 ? "mt-6 border-t border-border pt-4 text-sm" : "text-sm"}>
+              This account operates the platform.{" "}
+              <Link href={"/admin" as Route} className="underline underline-offset-4">
+                Go to the control plane
+              </Link>
+              .
+            </p>
+          ) : null}
         </AppCard>
       </main>
     </div>

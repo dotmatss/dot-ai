@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 
+import { findAgentById } from "@/features/agents/server/agent-repository";
 import { DEFAULT_APPEARANCE, DEFAULT_MODEL_CONFIG } from "@/features/chatbots/constants";
 import type { CreateChatbotInput, updateChatbotSchema } from "@/features/chatbots/schemas";
 import {
@@ -105,6 +106,32 @@ export async function updateChatbot(ctx: ActorContext, chatbotId: string, input:
       await replaceChatbotKnowledgeBases(ctx.workspaceId, chatbotId, unique, client);
     }
 
+    // Linking an agent. Resolved through THIS workspace, so an id belonging to
+    // another tenant is indistinguishable from one that does not exist - and
+    // the composite foreign key would refuse the write regardless. Unlinking
+    // (null) needs no check: it only ever returns the chatbot to its own
+    // configuration, which it still has.
+    if (input.agentId) {
+      const agent = await findAgentById(ctx.workspaceId, input.agentId, client);
+      if (!agent) {
+        throw ApiError.validation({ agentId: ["That agent does not belong to this workspace"] });
+      }
+      // An archived agent is retired. Deploying one would put configuration
+      // somebody deliberately took out of service in front of the public.
+      if (agent.status === "archived") {
+        throw ApiError.validation({ agentId: ["That agent is archived. Restore it before deploying it."] });
+      }
+      // A supervisor delegates, and delegation executes other agents. A chatbot
+      // channel is anonymous and deliberately tool-free, so a supervisor is
+      // refused outright rather than quietly deployed with its delegation
+      // switched off - which would be a different agent than the one chosen.
+      if (agent.canDelegate) {
+        throw ApiError.validation({
+          agentId: ["Agents with delegation enabled cannot be deployed to a chatbot yet. Choose an agent that does not delegate, or switch delegation off."],
+        });
+      }
+    }
+
     const patch: ChatbotPatch = {
       name: input.name,
       description: input.description === undefined ? undefined : input.description?.trim() ? input.description.trim() : null,
@@ -112,6 +139,7 @@ export async function updateChatbot(ctx: ActorContext, chatbotId: string, input:
       welcomeMessage: input.welcomeMessage,
       status: input.status,
       modelConfig: input.modelConfig ? { ...DEFAULT_MODEL_CONFIG, ...input.modelConfig } : undefined,
+      agentId: input.agentId,
       appearance: input.appearance ? { ...DEFAULT_APPEARANCE, ...input.appearance } : undefined,
       allowedDomains: input.allowedDomains ? [...new Set(input.allowedDomains)] : undefined,
     };

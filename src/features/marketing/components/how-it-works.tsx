@@ -9,7 +9,7 @@ export function HowItWorks() {
     <section className="border-b border-border bg-background" aria-labelledby="how-it-works-heading">
       <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
         <div className="max-w-2xl">
-          <p className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">How it works</p>
+          <p className="text-caption font-medium uppercase tracking-caption text-foreground-muted">How it works</p>
           <h2 id="how-it-works-heading" className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
             Build, ground, test, deploy, monitor
           </h2>

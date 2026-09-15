@@ -30,5 +30,10 @@ export const TOP_CHATBOTS_LIMIT = 8;
 /** Chatbots listed in the token breakdown table. */
 export const TOKEN_TABLE_LIMIT = 10;
 
-/** Billing is not live yet; every workspace is on the free plan. */
-export const CURRENT_PLAN = { name: "Free", description: "Credits and subscriptions are coming soon." } as const;
+/*
+ * `CURRENT_PLAN` used to live here, hard-coding "Free" and "Credits and
+ * subscriptions are coming soon". Both statements stopped being true when the
+ * billing feature landed, and a module constant cannot tell one workspace from
+ * another anyway. Surfaces that want to name the plan call `getPlanLabel()`
+ * from `@/features/billing/server/entitlements`.
+ */

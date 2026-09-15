@@ -1,26 +1,47 @@
 import "server-only";
 
-import { USAGE_WINDOW_DAYS } from "@/features/settings/constants";
-import { canChangeMemberRole, canRemoveMember, MEMBER_RULE_MESSAGES } from "@/features/settings/member-rules";
+import { createHash, randomBytes } from "node:crypto";
+
+import type { PoolClient } from "pg";
+
+import { getServerEnv } from "@/config/env";
+import { INVITATION_EXPIRY_DAYS, USAGE_WINDOW_DAYS } from "@/features/settings/constants";
+import {
+  canChangeMemberRole,
+  canInviteMember,
+  canRemoveMember,
+  canRevokeInvitation,
+  MEMBER_RULE_MESSAGES,
+} from "@/features/settings/member-rules";
+import type { InviteMemberInput } from "@/features/settings/schemas";
 import {
   deleteOrganizationMember,
+  findOpenInvitationIdByEmail,
   findOrganizationMember,
+  findOrganizationMemberIdByEmail,
+  insertOrganizationInvitation,
+  listOrganizationInvitations,
+  revokeOrganizationInvitation,
   findUserProfile,
   findUserSessionId,
   listOrganizationMembers,
   listUserSessions,
   lockOrganizationOwnerIds,
+  sumStorageByCategory,
   sumUsageByKind,
   updateOrganizationMemberRole,
   updateUserProfile,
 } from "@/features/settings/server/settings-repository";
 import type {
+  InvitationCreated,
   MembersOverview,
+  OrganizationInvitation,
   OrganizationMember,
   SessionRevocationResult,
   UserProfile,
   UserSessionSummary,
   WorkspaceGeneralSettings,
+  WorkspaceStorageSummary,
   WorkspaceUsageSummary,
 } from "@/features/settings/types";
 import { canManage, type MemberRole } from "@/features/workspaces/roles";
@@ -30,7 +51,7 @@ import { ApiError } from "@/lib/api/api-error";
 import { recordActivity } from "@/server/activity/activity-log";
 import type { WorkspaceContext } from "@/server/auth/dal";
 import { clearSessionCookie, destroyAllUserSessions, destroySession } from "@/server/auth/session";
-import { withWorkspace, type Queryable } from "@/server/db/client";
+import { withWorkspace } from "@/server/db/client";
 
 /**
  * Settings business rules.
@@ -135,12 +156,30 @@ export async function renameWorkspace(actor: SettingsActor, input: { name: strin
 /* Members                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function toOverview(members: OrganizationMember[]): MembersOverview {
-  return { members, ownerCount: members.filter((member) => member.role === "owner").length };
+function toOverview(members: OrganizationMember[], invitations: OrganizationInvitation[]): MembersOverview {
+  return {
+    members,
+    ownerCount: members.filter((member) => member.role === "owner").length,
+    invitations,
+  };
 }
 
+/**
+ * The member list, plus the pending invitations *if the caller may see them*.
+ *
+ * Seeing who is in your organization is ordinary; seeing the invitation
+ * pipeline is not - it carries addresses of people who have not joined, the
+ * role each was offered, and who offered it. The roster stays open to every
+ * role and the pipeline does not, so the distinction lives in the read model
+ * rather than in a route floor that would take the whole page away.
+ */
 export async function getMembersOverview(actor: SettingsActor): Promise<MembersOverview> {
-  return toOverview(await listOrganizationMembers(actor.organization.id, actor.userId));
+  const canSeeInvitations = canManage(actor.role);
+  const [members, invitations] = await Promise.all([
+    listOrganizationMembers(actor.organization.id, actor.userId),
+    canSeeInvitations ? listOrganizationInvitations(actor.organization.id) : Promise.resolve([]),
+  ]);
+  return toOverview(members, invitations);
 }
 
 /**
@@ -150,7 +189,7 @@ export async function getMembersOverview(actor: SettingsActor): Promise<MembersO
  * before the lock was taken; an admin demoted in the meantime must not still
  * be able to act as one.
  */
-async function readActorMember(actor: SettingsActor, client: Queryable): Promise<OrganizationMember> {
+async function readActorMember(actor: SettingsActor, client: PoolClient): Promise<OrganizationMember> {
   const self = await findOrganizationMember(actor.organization.id, actor.userId, actor.userId, client);
   if (!self) throw ApiError.forbidden(MEMBER_RULE_MESSAGES.manageRequired);
   return self;
@@ -159,7 +198,7 @@ async function readActorMember(actor: SettingsActor, client: Queryable): Promise
 async function readSubjectMember(
   actor: SettingsActor,
   targetUserId: string,
-  client: Queryable,
+  client: PoolClient,
 ): Promise<OrganizationMember> {
   const subject = await findOrganizationMember(actor.organization.id, targetUserId, actor.userId, client);
   if (!subject) throw ApiError.notFound("Member not found");
@@ -244,6 +283,106 @@ export async function removeMember(actor: SettingsActor, targetUserId: string): 
         action: "removed",
         summary: `Removed ${subject.name} from the organization`,
         metadata: { role: subject.role },
+      },
+      client,
+    );
+  });
+
+  return getMembersOverview(actor);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Invitations                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Invites one address into the organization.
+ *
+ * The link token is generated here and never stored: only its SHA-256 reaches
+ * the database, so the URL returned to the inviter is the single copy that
+ * exists. That is also why it is returned exactly once, from this call, and is
+ * not readable from the invitation list afterwards.
+ *
+ * Both "already a member" and "already invited" are checked inside the writing
+ * transaction rather than before it, because either can become true between a
+ * check and an insert; the partial unique index is the backstop that makes the
+ * race safe, and these checks are what turn it into a usable message.
+ */
+export async function inviteMember(actor: SettingsActor, input: InviteMemberInput): Promise<InvitationCreated> {
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_DAYS * 86_400_000);
+
+  const invitation = await withWorkspace(actor.workspaceId, async (client) => {
+    const self = await readActorMember(actor, client);
+
+    const decision = canInviteMember({ actor: { userId: self.userId, role: self.role }, role: input.role });
+    if (!decision.allowed) throw ApiError.forbidden(decision.reason);
+
+    const memberId = await findOrganizationMemberIdByEmail(actor.organization.id, input.email, client);
+    if (memberId) throw ApiError.conflict(MEMBER_RULE_MESSAGES.inviteAlreadyMember);
+
+    const openInvitation = await findOpenInvitationIdByEmail(actor.organization.id, input.email, client);
+    if (openInvitation) throw ApiError.conflict(MEMBER_RULE_MESSAGES.invitePending);
+
+    const created = await insertOrganizationInvitation(
+      {
+        organizationId: actor.organization.id,
+        email: input.email,
+        role: input.role,
+        tokenHash,
+        invitedBy: actor.userId,
+        expiresAt,
+      },
+      client,
+    );
+
+    await recordActivity(
+      {
+        workspaceId: actor.workspaceId,
+        actorId: actor.userId,
+        entityType: "organization_invitation",
+        entityId: created.id,
+        action: "invited",
+        summary: `Invited ${input.email} as ${input.role}`,
+        metadata: { role: input.role },
+      },
+      client,
+    );
+
+    return created;
+  });
+
+  return {
+    overview: await getMembersOverview(actor),
+    invitation,
+    // APP_URL, not a request header: a link that carries an invitation token
+    // must be built from configuration the caller cannot influence.
+    inviteUrl: `${getServerEnv().APP_URL.replace(/\/$/, "")}/invite/${token}`,
+  };
+}
+
+/** Withdraws a pending invitation. The row stays, marked revoked, as a record. */
+export async function revokeInvitation(actor: SettingsActor, invitationId: string): Promise<MembersOverview> {
+  assertUuid(invitationId, "Invitation not found");
+
+  await withWorkspace(actor.workspaceId, async (client) => {
+    const self = await readActorMember(actor, client);
+
+    const decision = canRevokeInvitation({ actor: { userId: self.userId, role: self.role } });
+    if (!decision.allowed) throw ApiError.forbidden(decision.reason);
+
+    const revoked = await revokeOrganizationInvitation(actor.organization.id, invitationId, client);
+    if (!revoked) throw ApiError.notFound("Invitation not found");
+
+    await recordActivity(
+      {
+        workspaceId: actor.workspaceId,
+        actorId: actor.userId,
+        entityType: "organization_invitation",
+        entityId: invitationId,
+        action: "revoked",
+        summary: "Revoked an invitation",
       },
       client,
     );
@@ -350,5 +489,30 @@ export async function getWorkspaceUsage(
     days,
     totals,
     totalEvents: totals.reduce((sum, total) => sum + total.events, 0),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Storage                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What this workspace is holding, by category.
+ *
+ * Unlike usage this is a standing total, not a window: it answers "how much is
+ * here now", and it moves down when something is deleted. The quota it is
+ * compared against is the caller's business - the page resolves the
+ * `storageBytes` entitlement through the billing read model and passes the
+ * answer to the component, the same way it does with the plan label.
+ *
+ * Largest first, because the whole point of the page is to find what to delete.
+ */
+export async function getWorkspaceStorage(workspaceId: string): Promise<WorkspaceStorageSummary> {
+  const totals = await sumStorageByCategory(workspaceId);
+  totals.sort((a, b) => b.bytes - a.bytes);
+  return {
+    totals,
+    totalBytes: totals.reduce((sum, total) => sum + total.bytes, 0),
+    totalRows: totals.reduce((sum, total) => sum + total.rows, 0),
   };
 }

@@ -1,3 +1,4 @@
+import type { DelegationConfig } from "@/features/agents/delegation-limits";
 import type { AgentMcpToolAttachment } from "@/features/mcp/agent-attachment";
 
 export const AGENT_STATUSES = ["draft", "active", "paused", "archived"] as const;
@@ -47,6 +48,14 @@ export interface AgentSummary {
   collectionCount: number;
   enabledToolCount: number;
   requiresApproval: boolean;
+  /**
+   * Dynamic delegation: this agent may hand a task to explicitly granted agents
+   * in its own workspace while it runs. A capability, not a kind of agent - the
+   * same agent in every other way, and still usable alone or in a workflow.
+   */
+  canDelegate: boolean;
+  /** Live grants. 0 for a standard agent, and for a supervisor configured with none. */
+  delegateCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -65,6 +74,69 @@ export interface Agent extends AgentSummary {
   memoryConfig: AgentMemoryConfig;
   outputSchema: AgentOutputSchema | null;
   collectionIds: string[];
+  /** Child agents this supervisor may delegate to. Empty for a standard agent. */
+  delegateIds: string[];
+  /** Parsed and clamped from `delegation_config`; never the raw column. */
+  delegationConfig: DelegationConfig;
+}
+
+/** One agent a supervisor may be granted, as the configuration UI sees it. */
+export interface DelegationTarget {
+  id: string;
+  name: string;
+  description: string | null;
+  status: AgentStatus;
+  /** The grant exists but is switched off; refused exactly like a missing one. */
+  enabled: boolean;
+  /** That agent may itself delegate, so granting it can add a level of depth. */
+  canDelegate: boolean;
+}
+
+/** An agent a supervisor could be granted, for the picker. */
+export interface DelegationCandidate {
+  id: string;
+  name: string;
+  description: string | null;
+  status: AgentStatus;
+  canDelegate: boolean;
+  granted: boolean;
+  enabled: boolean;
+}
+
+export const AGENT_EXECUTION_STATUSES = ["running", "succeeded", "failed", "timed_out", "refused"] as const;
+export type AgentExecutionStatus = (typeof AGENT_EXECUTION_STATUSES)[number];
+
+/**
+ * What a supervisor receives from a child.
+ *
+ * Deliberately narrow. There is no field here for the child's prompt, tool
+ * calls, retrieved passages, MCP arguments or configuration, because none of
+ * that may cross the boundary between two agents.
+ */
+export interface AgentExecutionResult {
+  executionId: string;
+  status: AgentExecutionStatus;
+  output: string | null;
+  error: string | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+  /** The child asked for something a person must approve before it happens. */
+  requiresApproval: boolean;
+}
+
+/** One node of an execution tree, for tracing. Never carries reasoning. */
+export interface AgentExecutionNode {
+  id: string;
+  agentId: string | null;
+  parentExecutionId: string | null;
+  depth: number;
+  status: AgentExecutionStatus;
+  inputTask: string | null;
+  error: string | null;
+  requiresApproval: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  startedAt: string;
+  finishedAt: string | null;
 }
 
 export interface AgentListFilters {

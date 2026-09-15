@@ -8,7 +8,7 @@
  * a suite run as `postgres` would pass while production was wide open. That is
  * exactly the deployment caveat recorded in docs/adr/0002-tenant-isolation.md.
  *
- *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" npx vitest run rls
+ *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" pnpm exec vitest run rls
  */
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

@@ -2,8 +2,8 @@
 /**
  * Minimal forward-only SQL migration runner.
  *
- *   npm run db:migrate            apply pending migrations
- *   npm run db:migrate -- --status  list applied / pending migrations
+ *   pnpm db:migrate            apply pending migrations
+ *   pnpm db:migrate --status  list applied / pending migrations
  *
  * Migrations live in src/server/db/migrations/NNNN_name.sql and are applied in
  * lexical order inside a transaction. Applied migrations are recorded in the

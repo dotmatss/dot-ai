@@ -1,6 +1,9 @@
 import "server-only";
 
-import { query, type Queryable } from "@/server/db/client";
+import type { PoolClient } from "pg";
+
+import { withDb } from "@/server/db/client";
+import { activityLog } from "@/server/db/schema";
 
 export interface ActivityInput {
   workspaceId: string;
@@ -13,11 +16,18 @@ export interface ActivityInput {
 }
 
 /** Append-only audit trail powering "recent activity" and future compliance needs. */
-export async function recordActivity(input: ActivityInput, client?: Queryable): Promise<void> {
-  await query(
-    `INSERT INTO activity_log (workspace_id, actor_id, entity_type, entity_id, action, summary, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [input.workspaceId, input.actorId, input.entityType, input.entityId, input.action, input.summary, input.metadata ?? {}],
+export async function recordActivity(input: ActivityInput, client?: PoolClient): Promise<void> {
+  await withDb(
+    (db) =>
+      db.insert(activityLog).values({
+        workspaceId: input.workspaceId,
+        actorId: input.actorId,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        action: input.action,
+        summary: input.summary,
+        metadata: input.metadata ?? {},
+      }),
     client,
   );
 }

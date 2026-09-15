@@ -28,6 +28,11 @@ export type BillingInterval = (typeof BILLING_INTERVALS)[number];
  * The four metered keys line up with the `kind` values already written to
  * `usage_events`, so usage-based limits can be enforced later without a new
  * metering mechanism.
+ *
+ * `storageBytes` is the odd one: it is a standing total rather than something
+ * consumed over a period, and it is measured by counting bytes in tables the
+ * billing feature must not read. It therefore arrives as a caller-supplied
+ * `current`, exactly like `chatbots` and `crmContacts`.
  */
 export const ENTITLEMENT_KEYS = [
   "chatbots",
@@ -42,6 +47,7 @@ export const ENTITLEMENT_KEYS = [
   "messagesPerMonth",
   "tokensPerMonth",
   "workflowRunsPerMonth",
+  "storageBytes",
 ] as const;
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number];
 

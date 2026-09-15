@@ -1,5 +1,7 @@
 import "server-only";
 
+import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+
 import type {
   ContactSearchResult,
   Conversation,
@@ -10,8 +12,9 @@ import type {
   ConversationStatus,
   MessageRole,
 } from "@/features/conversations/types";
-import { query, queryOne, type Queryable } from "@/server/db/client";
-import { likePattern, normalizePage, ParamBuilder, toIso, toIsoRequired, toPaginated } from "@/server/db/sql";
+import { withDb, type Database, type DatabaseClient } from "@/server/db/client";
+import { agents, chatbots, contacts, conversations, messages, organizationMembers, users, workspaces } from "@/server/db/schema";
+import { likePattern, normalizePage, toIso, toIsoRequired, toPaginated } from "@/server/db/sql";
 import type { RetrievedSource, TokenUsage } from "@/types/ai";
 import type { Paginated } from "@/types/pagination";
 
@@ -29,33 +32,17 @@ export interface ConversationRecord {
   messageCount: number;
 }
 
-interface ConversationRow {
-  id: string;
-  workspace_id: string;
-  chatbot_id: string | null;
-  agent_id: string | null;
-  contact_id: string | null;
-  channel: ConversationChannel;
-  status: "open" | "resolved" | "escalated";
-  title: string | null;
-  message_count: number;
-}
-
-function mapConversation(row: ConversationRow): ConversationRecord {
-  return {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    chatbotId: row.chatbot_id,
-    agentId: row.agent_id,
-    contactId: row.contact_id,
-    channel: row.channel,
-    status: row.status,
-    title: row.title,
-    messageCount: row.message_count,
-  };
-}
-
-const CONVERSATION_COLUMNS = "id, workspace_id, chatbot_id, agent_id, contact_id, channel, status, title, message_count";
+const conversationColumns = {
+  id: conversations.id,
+  workspaceId: conversations.workspaceId,
+  chatbotId: conversations.chatbotId,
+  agentId: conversations.agentId,
+  contactId: conversations.contactId,
+  channel: conversations.channel,
+  status: conversations.status,
+  title: conversations.title,
+  messageCount: conversations.messageCount,
+};
 
 export async function createConversation(
   input: {
@@ -67,33 +54,44 @@ export async function createConversation(
     title?: string | null;
     metadata?: Record<string, unknown>;
   },
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<ConversationRecord> {
-  const row = await queryOne<ConversationRow>(
-    `INSERT INTO conversations (workspace_id, chatbot_id, agent_id, contact_id, channel, title, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${CONVERSATION_COLUMNS}`,
-    [
-      input.workspaceId,
-      input.chatbotId ?? null,
-      input.agentId ?? null,
-      input.contactId ?? null,
-      input.channel,
-      input.title ?? null,
-      input.metadata ?? {},
-    ],
+  const rows = await withDb(
+    (db) =>
+      db
+        .insert(conversations)
+        .values({
+          workspaceId: input.workspaceId,
+          chatbotId: input.chatbotId ?? null,
+          agentId: input.agentId ?? null,
+          contactId: input.contactId ?? null,
+          channel: input.channel,
+          title: input.title ?? null,
+          metadata: input.metadata ?? {},
+        })
+        .returning(conversationColumns),
     client,
   );
+  const row = rows[0];
   if (!row) throw new Error("Failed to create conversation");
-  return mapConversation(row);
+  return row;
 }
 
-export async function findConversation(workspaceId: string, conversationId: string, client?: Queryable): Promise<ConversationRecord | null> {
-  const row = await queryOne<ConversationRow>(
-    `SELECT ${CONVERSATION_COLUMNS} FROM conversations WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, conversationId],
+export async function findConversation(
+  workspaceId: string,
+  conversationId: string,
+  client?: DatabaseClient,
+): Promise<ConversationRecord | null> {
+  const rows = await withDb(
+    (db) =>
+      db
+        .select(conversationColumns)
+        .from(conversations)
+        .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, conversationId)))
+        .limit(1),
     client,
   );
-  return row ? mapConversation(row) : null;
+  return rows[0] ?? null;
 }
 
 export async function appendMessage(
@@ -112,31 +110,39 @@ export async function appendMessage(
      */
     authorId?: string | null;
   },
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<{ id: string; createdAt: Date }> {
-  const row = await queryOne<{ id: string; created_at: Date }>(
-    `INSERT INTO messages (workspace_id, conversation_id, role, content, sources, usage, tool_calls, author_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
-    [
-      input.workspaceId,
-      input.conversationId,
-      input.role,
-      input.content,
-      input.sources ? JSON.stringify(input.sources) : null,
-      input.usage ? JSON.stringify(input.usage) : null,
-      input.toolCalls ? JSON.stringify(input.toolCalls) : null,
-      input.authorId ?? null,
-    ],
+  const inserted = await withDb(
+    (db) =>
+      db
+        .insert(messages)
+        .values({
+          workspaceId: input.workspaceId,
+          conversationId: input.conversationId,
+          role: input.role,
+          content: input.content,
+          sources: input.sources ?? null,
+          usage: input.usage ?? null,
+          toolCalls: input.toolCalls ?? null,
+          authorId: input.authorId ?? null,
+        })
+        .returning({ id: messages.id, createdAt: messages.createdAt }),
     client,
   );
+  const row = inserted[0];
   if (!row) throw new Error("Failed to append message");
-  await query(
-    `UPDATE conversations SET message_count = message_count + 1, last_message_at = $3
-     WHERE workspace_id = $1 AND id = $2`,
-    [input.workspaceId, input.conversationId, row.created_at],
+
+  // Incremented in the database rather than read-modify-written here, so two
+  // concurrent appends cannot both write the same count.
+  await withDb(
+    (db) =>
+      db
+        .update(conversations)
+        .set({ messageCount: sql`${conversations.messageCount} + 1`, lastMessageAt: row.createdAt })
+        .where(and(eq(conversations.workspaceId, input.workspaceId), eq(conversations.id, input.conversationId))),
     client,
   );
-  return { id: row.id, createdAt: row.created_at };
+  return { id: row.id, createdAt: row.createdAt };
 }
 
 export function deriveConversationTitle(firstMessage: string): string {
@@ -150,49 +156,77 @@ export function deriveConversationTitle(firstMessage: string): string {
 
 interface ConversationItemRow {
   id: string;
-  workspace_id: string;
+  workspaceId: string;
   title: string | null;
   status: ConversationStatus;
   channel: ConversationChannel;
-  message_count: number;
-  last_message_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
-  chatbot_id: string | null;
-  chatbot_name: string | null;
-  agent_id: string | null;
-  agent_name: string | null;
-  contact_id: string | null;
-  contact_name: string | null;
-  contact_email: string | null;
-  assignee_id: string | null;
-  assignee_name: string | null;
-  assignee_avatar_url: string | null;
+  messageCount: number;
+  lastMessageAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  chatbotId: string | null;
+  chatbotName: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  contactId: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  assigneeAvatarUrl: string | null;
 }
 
 interface ConversationDetailRow extends ConversationItemRow {
   metadata: unknown;
 }
 
-const ITEM_COLUMNS = `
-  c.id, c.workspace_id, c.title, c.status, c.channel, c.message_count, c.last_message_at, c.created_at, c.updated_at,
-  cb.id AS chatbot_id, cb.name AS chatbot_name,
-  ag.id AS agent_id, ag.name AS agent_name,
-  ct.id AS contact_id, ct.name AS contact_name, ct.email AS contact_email,
-  au.id AS assignee_id, au.name AS assignee_name, au.avatar_url AS assignee_avatar_url`;
+/**
+ * The joined labels. Each id comes from the JOINED row, not from the foreign
+ * key column, so a label and its id can never disagree.
+ */
+const itemColumns = {
+  id: conversations.id,
+  workspaceId: conversations.workspaceId,
+  title: conversations.title,
+  status: conversations.status,
+  channel: conversations.channel,
+  messageCount: conversations.messageCount,
+  lastMessageAt: conversations.lastMessageAt,
+  createdAt: conversations.createdAt,
+  updatedAt: conversations.updatedAt,
+  chatbotId: chatbots.id,
+  chatbotName: chatbots.name,
+  agentId: agents.id,
+  agentName: agents.name,
+  contactId: contacts.id,
+  contactName: contacts.name,
+  contactEmail: contacts.email,
+  assigneeId: users.id,
+  assigneeName: users.name,
+  assigneeAvatarUrl: users.avatarUrl,
+};
 
 /**
  * The originating chatbot/agent, the linked contact and the assignee are all
  * optional, so every join is a LEFT JOIN, and each join onto a tenant table is
  * additionally constrained to the same workspace: a stale id must never be able
  * to surface a row from another tenant.
+ *
+ * `users` carries no workspace of its own - the assignee is validated by
+ * `isWorkspaceMember()` before it is ever written.
  */
-const CONVERSATION_FROM = `
-  FROM conversations c
-  LEFT JOIN chatbots cb ON cb.id = c.chatbot_id AND cb.workspace_id = c.workspace_id
-  LEFT JOIN agents ag ON ag.id = c.agent_id AND ag.workspace_id = c.workspace_id
-  LEFT JOIN contacts ct ON ct.id = c.contact_id AND ct.workspace_id = c.workspace_id
-  LEFT JOIN users au ON au.id = c.assigned_to`;
+function conversationsWithLabels(
+  db: Database,
+  selection: typeof itemColumns | (typeof itemColumns & { metadata: typeof conversations.metadata }),
+) {
+  return db
+    .select(selection)
+    .from(conversations)
+    .leftJoin(chatbots, and(eq(chatbots.id, conversations.chatbotId), eq(chatbots.workspaceId, conversations.workspaceId)))
+    .leftJoin(agents, and(eq(agents.id, conversations.agentId), eq(agents.workspaceId, conversations.workspaceId)))
+    .leftJoin(contacts, and(eq(contacts.id, conversations.contactId), eq(contacts.workspaceId, conversations.workspaceId)))
+    .leftJoin(users, eq(users.id, conversations.assignedTo));
+}
 
 function mapListItem(row: ConversationItemRow): ConversationListItem {
   return {
@@ -200,20 +234,20 @@ function mapListItem(row: ConversationItemRow): ConversationListItem {
     title: row.title,
     status: row.status,
     channel: row.channel,
-    messageCount: row.message_count,
-    lastMessageAt: toIso(row.last_message_at),
-    createdAt: toIsoRequired(row.created_at),
-    updatedAt: toIsoRequired(row.updated_at),
+    messageCount: row.messageCount,
+    lastMessageAt: toIso(row.lastMessageAt),
+    createdAt: toIsoRequired(row.createdAt),
+    updatedAt: toIsoRequired(row.updatedAt),
     source:
-      row.chatbot_id && row.chatbot_name !== null
-        ? { type: "chatbot", id: row.chatbot_id, name: row.chatbot_name }
-        : row.agent_id && row.agent_name !== null
-          ? { type: "agent", id: row.agent_id, name: row.agent_name }
+      row.chatbotId && row.chatbotName !== null
+        ? { type: "chatbot", id: row.chatbotId, name: row.chatbotName }
+        : row.agentId && row.agentName !== null
+          ? { type: "agent", id: row.agentId, name: row.agentName }
           : null,
-    contact: row.contact_id ? { id: row.contact_id, name: row.contact_name, email: row.contact_email } : null,
+    contact: row.contactId ? { id: row.contactId, name: row.contactName, email: row.contactEmail } : null,
     assignee:
-      row.assignee_id && row.assignee_name !== null
-        ? { id: row.assignee_id, name: row.assignee_name, avatarUrl: row.assignee_avatar_url }
+      row.assigneeId && row.assigneeName !== null
+        ? { id: row.assigneeId, name: row.assigneeName, avatarUrl: row.assigneeAvatarUrl }
         : null,
   };
 }
@@ -237,61 +271,74 @@ function readSummary(metadata: unknown): ConversationAiSummary | null {
 }
 
 function mapConversationDetail(row: ConversationDetailRow): Conversation {
-  return { ...mapListItem(row), workspaceId: row.workspace_id, summary: readSummary(row.metadata) };
+  return { ...mapListItem(row), workspaceId: row.workspaceId, summary: readSummary(row.metadata) };
 }
 
 /**
  * Inbox list. `assignedTo` must already be resolved to a user id by the caller;
  * the "me" literal is a URL convenience, never a database value.
  */
-export async function listConversations(workspaceId: string, filters: ConversationListFilters): Promise<Paginated<ConversationListItem>> {
+export async function listConversations(
+  workspaceId: string,
+  filters: ConversationListFilters,
+): Promise<Paginated<ConversationListItem>> {
   const page = normalizePage(filters);
-  const params = new ParamBuilder();
-  const where: string[] = [`c.workspace_id = ${params.add(workspaceId)}`];
-  if (filters.status) where.push(`c.status = ${params.add(filters.status)}`);
-  if (filters.channel) where.push(`c.channel = ${params.add(filters.channel)}`);
-  if (filters.chatbotId) where.push(`c.chatbot_id = ${params.add(filters.chatbotId)}`);
-  if (filters.agentId) where.push(`c.agent_id = ${params.add(filters.agentId)}`);
-  if (filters.contactId) where.push(`c.contact_id = ${params.add(filters.contactId)}`);
-  if (filters.assignedTo) where.push(`c.assigned_to = ${params.add(filters.assignedTo)}`);
+
+  const conditions: Array<SQL | undefined> = [eq(conversations.workspaceId, workspaceId)];
+  if (filters.status) conditions.push(eq(conversations.status, filters.status));
+  if (filters.channel) conditions.push(eq(conversations.channel, filters.channel));
+  if (filters.chatbotId) conditions.push(eq(conversations.chatbotId, filters.chatbotId));
+  if (filters.agentId) conditions.push(eq(conversations.agentId, filters.agentId));
+  if (filters.contactId) conditions.push(eq(conversations.contactId, filters.contactId));
+  if (filters.assignedTo) conditions.push(eq(conversations.assignedTo, filters.assignedTo));
   if (filters.q) {
     // EXISTS rather than a join onto messages: several matching messages must
     // not multiply the conversation row and corrupt the count and page size.
-    const pattern = params.add(likePattern(filters.q));
-    where.push(
-      `(c.title ILIKE ${pattern} OR EXISTS (
-         SELECT 1 FROM messages m
-         WHERE m.conversation_id = c.id AND m.workspace_id = c.workspace_id AND m.content ILIKE ${pattern}))`,
+    const pattern = likePattern(filters.q);
+    conditions.push(
+      or(
+        ilike(conversations.title, pattern),
+        sql`EXISTS (
+          SELECT 1 FROM ${messages}
+          WHERE ${messages.conversationId} = ${conversations.id}
+            AND ${messages.workspaceId} = ${conversations.workspaceId}
+            AND ${messages.content} ILIKE ${pattern})`,
+      ),
     );
   }
-  const whereSql = where.join(" AND ");
+  const where = and(...conditions);
 
-  const [rows, countRow] = await Promise.all([
-    query<ConversationItemRow>(
-      `SELECT ${ITEM_COLUMNS} ${CONVERSATION_FROM}
-       WHERE ${whereSql}
-       ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC
-       LIMIT ${params.add(page.pageSize)} OFFSET ${params.add(page.offset)}`,
-      params.values,
+  const [rows, totals] = await Promise.all([
+    withDb((db) =>
+      conversationsWithLabels(db, itemColumns)
+        .where(where)
+        // NULLS LAST is explicit: PostgreSQL defaults DESC to NULLS FIRST,
+        // which would float conversations that have never had a message to
+        // the top of the inbox.
+        .orderBy(sql`${conversations.lastMessageAt} DESC NULLS LAST`, desc(conversations.createdAt))
+        .limit(page.pageSize)
+        .offset(page.offset),
     ),
-    queryOne<{ count: string }>(`SELECT count(*) AS count FROM conversations c WHERE ${whereSql}`, params.values.slice(0, -2)),
+    withDb((db) => db.select({ total: count() }).from(conversations).where(where)),
   ]);
 
-  return toPaginated(rows.map(mapListItem), Number(countRow?.count ?? 0), page);
+  return toPaginated(rows.map(mapListItem), totals[0]?.total ?? 0, page);
 }
 
 /** Full conversation with its joined labels and the stored AI summary. */
 export async function findConversationDetail(
   workspaceId: string,
   conversationId: string,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<Conversation | null> {
-  const row = await queryOne<ConversationDetailRow>(
-    `SELECT ${ITEM_COLUMNS}, c.metadata ${CONVERSATION_FROM} WHERE c.workspace_id = $1 AND c.id = $2`,
-    [workspaceId, conversationId],
+  const rows = await withDb(
+    (db) =>
+      conversationsWithLabels(db, { ...itemColumns, metadata: conversations.metadata })
+        .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, conversationId)))
+        .limit(1),
     client,
   );
-  return row ? mapConversationDetail(row) : null;
+  return rows[0] ? mapConversationDetail(rows[0] as ConversationDetailRow) : null;
 }
 
 interface MessageRow {
@@ -299,11 +346,11 @@ interface MessageRow {
   role: MessageRole;
   content: string;
   sources: unknown;
-  tool_calls: unknown;
+  toolCalls: unknown;
   usage: unknown;
-  author_id: string | null;
-  author_name: string | null;
-  created_at: Date;
+  authorId: string | null;
+  authorName: string | null;
+  createdAt: Date;
 }
 
 function readSources(value: unknown): RetrievedSource[] | null {
@@ -327,10 +374,10 @@ function mapMessage(row: MessageRow): ConversationMessage {
     role: row.role,
     content: row.content,
     sources: readSources(row.sources),
-    toolCalls: Array.isArray(row.tool_calls) && row.tool_calls.length > 0 ? row.tool_calls : null,
+    toolCalls: Array.isArray(row.toolCalls) && row.toolCalls.length > 0 ? row.toolCalls : null,
     usage: readUsage(row.usage),
-    author: row.author_id && row.author_name !== null ? { id: row.author_id, name: row.author_name } : null,
-    createdAt: toIsoRequired(row.created_at),
+    author: row.authorId && row.authorName !== null ? { id: row.authorId, name: row.authorName } : null,
+    createdAt: toIsoRequired(row.createdAt),
   };
 }
 
@@ -343,16 +390,27 @@ export async function listConversationMessages(
   workspaceId: string,
   conversationId: string,
   limit: number,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<ConversationMessage[]> {
-  const rows = await query<MessageRow>(
-    `SELECT m.id, m.role, m.content, m.sources, m.tool_calls, m.usage, m.author_id, u.name AS author_name, m.created_at
-     FROM messages m
-     LEFT JOIN users u ON u.id = m.author_id
-     WHERE m.workspace_id = $1 AND m.conversation_id = $2
-     ORDER BY m.created_at DESC, m.id DESC
-     LIMIT $3`,
-    [workspaceId, conversationId, limit],
+  const rows = await withDb(
+    (db) =>
+      db
+        .select({
+          id: messages.id,
+          role: messages.role,
+          content: messages.content,
+          sources: messages.sources,
+          toolCalls: messages.toolCalls,
+          usage: messages.usage,
+          authorId: messages.authorId,
+          authorName: users.name,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .leftJoin(users, eq(users.id, messages.authorId))
+        .where(and(eq(messages.workspaceId, workspaceId), eq(messages.conversationId, conversationId)))
+        .orderBy(desc(messages.createdAt), desc(messages.id))
+        .limit(limit),
     client,
   );
   return rows.reverse().map(mapMessage);
@@ -364,28 +422,26 @@ export interface ConversationPatch {
   contactId?: string | null;
 }
 
-const COLUMN_BY_FIELD: Record<keyof ConversationPatch, string> = {
-  status: "status",
-  assignedTo: "assigned_to",
-  contactId: "contact_id",
-};
-
 export async function updateConversationRow(
   workspaceId: string,
   conversationId: string,
   patch: ConversationPatch,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<void> {
-  const params = new ParamBuilder();
-  const sets: string[] = [];
-  for (const [field, value] of Object.entries(patch) as Array<[keyof ConversationPatch, unknown]>) {
-    if (value === undefined) continue;
-    sets.push(`${COLUMN_BY_FIELD[field]} = ${params.add(value)}`);
-  }
-  if (sets.length === 0) return;
-  await query(
-    `UPDATE conversations SET ${sets.join(", ")} WHERE workspace_id = ${params.add(workspaceId)} AND id = ${params.add(conversationId)}`,
-    params.values,
+  // Only the keys actually present are written; an absent field is left alone
+  // rather than being overwritten with undefined.
+  const values: Partial<typeof conversations.$inferInsert> = {};
+  if (patch.status !== undefined) values.status = patch.status;
+  if (patch.assignedTo !== undefined) values.assignedTo = patch.assignedTo;
+  if (patch.contactId !== undefined) values.contactId = patch.contactId;
+  if (Object.keys(values).length === 0) return;
+
+  await withDb(
+    (db) =>
+      db
+        .update(conversations)
+        .set(values)
+        .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, conversationId))),
     client,
   );
 }
@@ -395,24 +451,33 @@ export async function saveConversationSummary(
   workspaceId: string,
   conversationId: string,
   summary: ConversationAiSummary,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<void> {
-  await query(
-    `UPDATE conversations
-     SET metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('summary', $3::jsonb)
-     WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, conversationId, JSON.stringify(summary)],
+  await withDb(
+    (db) =>
+      db
+        .update(conversations)
+        // `||` is the jsonb concatenation operator: it merges the new key into
+        // whatever else the column holds, which an assignment would discard.
+        .set({
+          metadata: sql`coalesce(${conversations.metadata}, '{}'::jsonb) || jsonb_build_object('summary', ${JSON.stringify(summary)}::jsonb)`,
+        })
+        .where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, conversationId))),
     client,
   );
 }
 
-export async function contactExists(workspaceId: string, contactId: string, client?: Queryable): Promise<boolean> {
-  const row = await queryOne<{ id: string }>(
-    "SELECT id FROM contacts WHERE workspace_id = $1 AND id = $2",
-    [workspaceId, contactId],
+export async function contactExists(workspaceId: string, contactId: string, client?: DatabaseClient): Promise<boolean> {
+  const rows = await withDb(
+    (db) =>
+      db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, contactId)))
+        .limit(1),
     client,
   );
-  return Boolean(row);
+  return rows.length > 0;
 }
 
 /**
@@ -420,15 +485,18 @@ export async function contactExists(workspaceId: string, contactId: string, clie
  * id taken from a request body is otherwise an unauthenticated pointer at any
  * row in `users`.
  */
-export async function isWorkspaceMember(workspaceId: string, userId: string, client?: Queryable): Promise<boolean> {
-  const row = await queryOne<{ user_id: string }>(
-    `SELECT m.user_id FROM workspaces w
-     JOIN organization_members m ON m.organization_id = w.organization_id
-     WHERE w.id = $1 AND m.user_id = $2`,
-    [workspaceId, userId],
+export async function isWorkspaceMember(workspaceId: string, userId: string, client?: DatabaseClient): Promise<boolean> {
+  const rows = await withDb(
+    (db) =>
+      db
+        .select({ userId: organizationMembers.userId })
+        .from(workspaces)
+        .innerJoin(organizationMembers, eq(organizationMembers.organizationId, workspaces.organizationId))
+        .where(and(eq(workspaces.id, workspaceId), eq(organizationMembers.userId, userId)))
+        .limit(1),
     client,
   );
-  return Boolean(row);
+  return rows.length > 0;
 }
 
 /**
@@ -437,13 +505,26 @@ export async function isWorkspaceMember(workspaceId: string, userId: string, cli
  */
 export async function searchContacts(workspaceId: string, term: string, limit: number): Promise<ContactSearchResult[]> {
   const pattern = likePattern(term);
-  const rows = await query<{ id: string; name: string | null; email: string | null; company: string | null; stage: string }>(
-    `SELECT id, name, email, company, stage
-     FROM contacts
-     WHERE workspace_id = $1 AND (name ILIKE $2 OR email ILIKE $2 OR company ILIKE $2)
-     ORDER BY name ASC NULLS LAST, email ASC NULLS LAST
-     LIMIT $3`,
-    [workspaceId, pattern, limit],
+  const rows = await withDb((db) =>
+    db
+      .select({
+        id: contacts.id,
+        name: contacts.name,
+        email: contacts.email,
+        company: contacts.company,
+        stage: contacts.stage,
+      })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.workspaceId, workspaceId),
+          or(ilike(contacts.name, pattern), ilike(contacts.email, pattern), ilike(contacts.company, pattern)),
+        ),
+      )
+      // ASC already sorts nulls last in PostgreSQL, which is what the unnamed
+      // contacts here rely on.
+      .orderBy(asc(contacts.name), asc(contacts.email))
+      .limit(limit),
   );
   return rows.map((row) => ({ id: row.id, name: row.name, email: row.email, company: row.company, stage: row.stage }));
 }

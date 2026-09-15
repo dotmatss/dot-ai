@@ -1,5 +1,8 @@
 import "server-only";
 
+import { and, arrayContains, count, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
+
 import { TAG_FACET_LIMIT } from "@/features/crm/constants";
 import { normalizeProperties } from "@/features/crm/normalize";
 import type { SummaryMaterial } from "@/features/crm/summary-prompt";
@@ -13,18 +16,36 @@ import type {
   ContactTagCount,
   ContactTimelineEntry,
 } from "@/features/crm/types";
-import { query, queryOne, type Queryable } from "@/server/db/client";
-import { likePattern, normalizePage, ParamBuilder, toIso, toIsoRequired, toPaginated } from "@/server/db/sql";
+import { query, queryOne, withDb, type DatabaseClient } from "@/server/db/client";
+import {
+  agents,
+  chatbots,
+  contactActivities,
+  contactNotes,
+  contacts,
+  conversations,
+  messages,
+  users,
+} from "@/server/db/schema";
+import { likePattern, normalizePage, toIso, toIsoRequired, toPaginated } from "@/server/db/sql";
 import type { Paginated } from "@/types/pagination";
 
+/** Connection-less builder, used only to COMPOSE correlated subqueries. */
+const qb = new QueryBuilder();
+
 /**
- * All CRM SQL. Every statement filters on `workspace_id` with a positional
- * parameter; RLS is the second line of defence, not the first.
+ * All CRM persistence. Every statement filters on `workspace_id` explicitly;
+ * RLS is the second line of defence, not the first.
+ *
+ * Two reads stay hand-written SQL, each for a shape the builder has no
+ * vocabulary for, and both are noted where they appear: the tag facet, which
+ * calls a set-returning function in its FROM clause, and the timeline, which is
+ * a three-branch UNION ALL with per-column type coercion.
  */
 
 interface ContactRow {
   id: string;
-  workspace_id: string;
+  workspaceId: string;
   email: string | null;
   name: string | null;
   phone: string | null;
@@ -32,31 +53,59 @@ interface ContactRow {
   stage: ContactStage;
   source: string | null;
   tags: string[] | null;
-  properties: Record<string, unknown> | null;
-  ai_summary: string | null;
-  last_seen_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
+  properties: unknown;
+  aiSummary: string | null;
+  lastSeenAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 interface ContactDetailRow extends ContactRow {
-  note_count: string | number;
-  conversation_count: string | number;
-  activity_count: string | number;
+  noteCount: number;
+  conversationCount: number;
+  activityCount: number;
 }
 
-// `email` is citext; casting to text keeps the driver's value a plain string.
-const CONTACT_COLUMNS = `
-  c.id, c.workspace_id, c.email::text AS email, c.name, c.phone, c.company, c.stage, c.source,
-  c.tags, c.properties, c.ai_summary, c.last_seen_at, c.created_at, c.updated_at
-`;
+const contactColumns = {
+  id: contacts.id,
+  workspaceId: contacts.workspaceId,
+  email: contacts.email,
+  name: contacts.name,
+  phone: contacts.phone,
+  company: contacts.company,
+  stage: contacts.stage,
+  source: contacts.source,
+  tags: contacts.tags,
+  properties: contacts.properties,
+  aiSummary: contacts.aiSummary,
+  lastSeenAt: contacts.lastSeenAt,
+  createdAt: contacts.createdAt,
+  updatedAt: contacts.updatedAt,
+};
 
-const CONTACT_DETAIL_COLUMNS = `
-  ${CONTACT_COLUMNS},
-  (SELECT count(*) FROM contact_notes n WHERE n.workspace_id = c.workspace_id AND n.contact_id = c.id) AS note_count,
-  (SELECT count(*) FROM conversations cv WHERE cv.workspace_id = c.workspace_id AND cv.contact_id = c.id) AS conversation_count,
-  (SELECT count(*) FROM contact_activities a WHERE a.workspace_id = c.workspace_id AND a.contact_id = c.id) AS activity_count
-`;
+/**
+ * The three counters are correlated subqueries rather than joins: joining all
+ * three would multiply the rows and make every count wrong. Each one repeats
+ * the workspace predicate so a mislinked child row cannot be counted.
+ *
+ * Each is COMPOSED with the query builder rather than written as one `sql`
+ * template, and that is load-bearing. In a select list with no join, Drizzle
+ * renders an interpolated column without its table name, so a hand-written
+ * template would emit `WHERE "contact_id" = "id"` - two columns of the INNER
+ * table, which counts nothing. Composed this way the references stay qualified.
+ */
+const countFor = (child: typeof contactNotes | typeof conversations | typeof contactActivities) =>
+  sql<number>`${qb
+    .select({ c: sql`count(*)` })
+    .from(child)
+    .where(and(eq(child.workspaceId, contacts.workspaceId), eq(child.contactId, contacts.id)))}`.mapWith(Number);
+
+const contactDetailColumns = {
+  ...contactColumns,
+  noteCount: countFor(contactNotes),
+  conversationCount: countFor(conversations),
+  activityCount: countFor(contactActivities),
+};
 
 function mapSummary(row: ContactRow): ContactSummary {
   return {
@@ -68,21 +117,21 @@ function mapSummary(row: ContactRow): ContactSummary {
     stage: row.stage,
     source: row.source,
     tags: row.tags ?? [],
-    lastSeenAt: toIso(row.last_seen_at),
-    createdAt: toIsoRequired(row.created_at),
-    updatedAt: toIsoRequired(row.updated_at),
+    lastSeenAt: toIso(row.lastSeenAt),
+    createdAt: toIsoRequired(row.createdAt),
+    updatedAt: toIsoRequired(row.updatedAt),
   };
 }
 
 function mapContact(row: ContactDetailRow): Contact {
   return {
     ...mapSummary(row),
-    workspaceId: row.workspace_id,
-    properties: normalizeProperties(row.properties),
-    aiSummary: row.ai_summary,
-    noteCount: Number(row.note_count ?? 0),
-    conversationCount: Number(row.conversation_count ?? 0),
-    activityCount: Number(row.activity_count ?? 0),
+    workspaceId: row.workspaceId,
+    properties: normalizeProperties(row.properties as Record<string, unknown> | null),
+    aiSummary: row.aiSummary,
+    noteCount: Number(row.noteCount ?? 0),
+    conversationCount: Number(row.conversationCount ?? 0),
+    activityCount: Number(row.activityCount ?? 0),
   };
 }
 
@@ -92,54 +141,71 @@ function mapContact(row: ContactDetailRow): Contact {
 
 export async function listContacts(workspaceId: string, filters: ContactListFilters): Promise<Paginated<ContactSummary>> {
   const page = normalizePage(filters);
-  const params = new ParamBuilder();
-  const where: string[] = [`c.workspace_id = ${params.add(workspaceId)}`];
 
+  const conditions: Array<SQL | undefined> = [eq(contacts.workspaceId, workspaceId)];
   if (filters.q) {
-    const pattern = params.add(likePattern(filters.q));
-    where.push(`(c.name ILIKE ${pattern} OR c.email::text ILIKE ${pattern} OR c.company ILIKE ${pattern})`);
+    const pattern = likePattern(filters.q);
+    conditions.push(
+      or(
+        ilike(contacts.name, pattern),
+        // `email` is citext, which has no ILIKE operator of its own. The cast
+        // is what makes the pattern match resolve, as it did before.
+        sql`${contacts.email}::text ILIKE ${pattern}`,
+        ilike(contacts.company, pattern),
+      ),
+    );
   }
-  if (filters.stage) {
-    where.push(`c.stage = ${params.add(filters.stage)}`);
-  }
-  if (filters.tag) {
-    // Containment (rather than = ANY) is what the GIN index on tags serves.
-    where.push(`c.tags @> ARRAY[${params.add(filters.tag)}]::text[]`);
-  }
+  if (filters.stage) conditions.push(eq(contacts.stage, filters.stage));
+  // Containment (rather than = ANY) is what the GIN index on tags serves.
+  if (filters.tag) conditions.push(arrayContains(contacts.tags, [filters.tag]));
+  const where = and(...conditions);
 
-  const whereSql = where.join(" AND ");
-  const whereValues = [...params.values];
-
-  const [rows, countRow] = await Promise.all([
-    query<ContactRow>(
-      `SELECT ${CONTACT_COLUMNS} FROM contacts c WHERE ${whereSql}
-       ORDER BY c.created_at DESC, c.id DESC
-       LIMIT ${params.add(page.pageSize)} OFFSET ${params.add(page.offset)}`,
-      params.values,
+  const [rows, totals] = await Promise.all([
+    withDb((db) =>
+      db
+        .select(contactColumns)
+        .from(contacts)
+        .where(where)
+        .orderBy(desc(contacts.createdAt), desc(contacts.id))
+        .limit(page.pageSize)
+        .offset(page.offset),
     ),
-    queryOne<{ count: string }>(`SELECT count(*) AS count FROM contacts c WHERE ${whereSql}`, whereValues),
+    withDb((db) => db.select({ total: count() }).from(contacts).where(where)),
   ]);
 
-  return toPaginated(rows.map(mapSummary), Number(countRow?.count ?? 0), page);
+  return toPaginated(rows.map(mapSummary), totals[0]?.total ?? 0, page);
 }
 
-export async function findContactById(workspaceId: string, contactId: string, client?: Queryable): Promise<Contact | null> {
-  const row = await queryOne<ContactDetailRow>(
-    `SELECT ${CONTACT_DETAIL_COLUMNS} FROM contacts c WHERE c.workspace_id = $1 AND c.id = $2`,
-    [workspaceId, contactId],
+export async function findContactById(workspaceId: string, contactId: string, client?: DatabaseClient): Promise<Contact | null> {
+  const rows = await withDb(
+    (db) =>
+      db
+        .select(contactDetailColumns)
+        .from(contacts)
+        .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, contactId)))
+        .limit(1),
     client,
   );
-  return row ? mapContact(row) : null;
+  return rows[0] ? mapContact(rows[0]) : null;
 }
 
 /** Identity lookup for the per-workspace email uniqueness rule and for upserts. */
-export async function findContactIdByEmail(workspaceId: string, email: string, client?: Queryable): Promise<string | null> {
-  const row = await queryOne<{ id: string }>(
-    "SELECT id FROM contacts WHERE workspace_id = $1 AND email = $2",
-    [workspaceId, email],
+export async function findContactIdByEmail(
+  workspaceId: string,
+  email: string,
+  client?: DatabaseClient,
+): Promise<string | null> {
+  const rows = await withDb(
+    (db) =>
+      db
+        .select({ id: contacts.id })
+        .from(contacts)
+        // citext equality: the case-insensitive comparison happens in the database.
+        .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.email, email)))
+        .limit(1),
     client,
   );
-  return row?.id ?? null;
+  return rows[0]?.id ?? null;
 }
 
 export interface InsertContactInput {
@@ -155,27 +221,29 @@ export interface InsertContactInput {
   lastSeenAt?: Date | null;
 }
 
-export async function insertContact(input: InsertContactInput, client?: Queryable): Promise<string> {
-  const row = await queryOne<{ id: string }>(
-    `INSERT INTO contacts (workspace_id, name, email, phone, company, source, stage, tags, properties, last_seen_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-     RETURNING id`,
-    [
-      input.workspaceId,
-      input.name,
-      input.email,
-      input.phone,
-      input.company,
-      input.source,
-      input.stage,
-      input.tags,
-      JSON.stringify(input.properties),
-      input.lastSeenAt ?? null,
-    ],
+export async function insertContact(input: InsertContactInput, client?: DatabaseClient): Promise<string> {
+  const rows = await withDb(
+    (db) =>
+      db
+        .insert(contacts)
+        .values({
+          workspaceId: input.workspaceId,
+          name: input.name,
+          email: input.email,
+          phone: input.phone,
+          company: input.company,
+          source: input.source,
+          stage: input.stage,
+          tags: input.tags,
+          properties: input.properties,
+          lastSeenAt: input.lastSeenAt ?? null,
+        })
+        .returning({ id: contacts.id }),
     client,
   );
-  if (!row) throw new Error("Failed to insert contact");
-  return row.id;
+  const id = rows[0]?.id;
+  if (!id) throw new Error("Failed to insert contact");
+  return id;
 }
 
 export interface ContactPatch {
@@ -191,49 +259,51 @@ export interface ContactPatch {
   lastSeenAt?: Date | null;
 }
 
-const COLUMN_BY_FIELD: Record<keyof ContactPatch, string> = {
-  name: "name",
-  email: "email",
-  phone: "phone",
-  company: "company",
-  source: "source",
-  stage: "stage",
-  tags: "tags",
-  properties: "properties",
-  aiSummary: "ai_summary",
-  lastSeenAt: "last_seen_at",
-};
-
 export async function updateContactRow(
   workspaceId: string,
   contactId: string,
   patch: ContactPatch,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<void> {
-  const params = new ParamBuilder();
-  const sets: string[] = [];
-  for (const [field, value] of Object.entries(patch) as Array<[keyof ContactPatch, unknown]>) {
-    if (value === undefined) continue;
-    const placeholder = params.add(field === "properties" ? JSON.stringify(value) : value);
-    sets.push(`${COLUMN_BY_FIELD[field]} = ${placeholder}`);
-  }
-  if (sets.length === 0) return;
-  await query(
-    `UPDATE contacts SET ${sets.join(", ")} WHERE workspace_id = ${params.add(workspaceId)} AND id = ${params.add(contactId)}`,
-    params.values,
+  // Only the keys actually present are written, so an absent field keeps its
+  // stored value instead of being overwritten with undefined.
+  const values: Partial<typeof contacts.$inferInsert> = {};
+  if (patch.name !== undefined) values.name = patch.name;
+  if (patch.email !== undefined) values.email = patch.email;
+  if (patch.phone !== undefined) values.phone = patch.phone;
+  if (patch.company !== undefined) values.company = patch.company;
+  if (patch.source !== undefined) values.source = patch.source;
+  if (patch.stage !== undefined) values.stage = patch.stage;
+  if (patch.tags !== undefined) values.tags = patch.tags;
+  if (patch.properties !== undefined) values.properties = patch.properties;
+  if (patch.aiSummary !== undefined) values.aiSummary = patch.aiSummary;
+  if (patch.lastSeenAt !== undefined) values.lastSeenAt = patch.lastSeenAt;
+  if (Object.keys(values).length === 0) return;
+
+  await withDb(
+    (db) => db.update(contacts).set(values).where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, contactId))),
     client,
   );
 }
 
 export async function deleteContactRow(workspaceId: string, contactId: string): Promise<boolean> {
-  const rows = await query<{ id: string }>("DELETE FROM contacts WHERE workspace_id = $1 AND id = $2 RETURNING id", [
-    workspaceId,
-    contactId,
-  ]);
+  const rows = await withDb((db) =>
+    db
+      .delete(contacts)
+      .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, contactId)))
+      .returning({ id: contacts.id }),
+  );
   return rows.length > 0;
 }
 
-/** Distinct tags with usage counts, powering the tag filter facet. */
+/**
+ * Distinct tags with usage counts, powering the tag filter facet.
+ *
+ * Raw SQL, and the one thing that makes it so is `unnest(c.tags)` in the FROM
+ * clause: expanding an array column into rows is a set-returning function, and
+ * Drizzle's `from()` takes a table or a subquery, not a lateral function call.
+ * Everything else here is an ordinary GROUP BY over the result.
+ */
 export async function listContactTags(workspaceId: string): Promise<ContactTagCount[]> {
   const rows = await query<{ tag: string; count: string }>(
     `SELECT tag, count(*) AS count
@@ -259,11 +329,16 @@ export interface InsertContactActivityInput {
   metadata?: Record<string, unknown>;
 }
 
-export async function insertContactActivity(input: InsertContactActivityInput, client?: Queryable): Promise<void> {
-  await query(
-    `INSERT INTO contact_activities (workspace_id, contact_id, type, description, metadata)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [input.workspaceId, input.contactId, input.type, input.description, JSON.stringify(input.metadata ?? {})],
+export async function insertContactActivity(input: InsertContactActivityInput, client?: DatabaseClient): Promise<void> {
+  await withDb(
+    (db) =>
+      db.insert(contactActivities).values({
+        workspaceId: input.workspaceId,
+        contactId: input.contactId,
+        type: input.type,
+        description: input.description,
+        metadata: input.metadata ?? {},
+      }),
     client,
   );
 }
@@ -273,6 +348,12 @@ export async function insertContactActivity(input: InsertContactActivityInput, c
  * so they are unioned with the recorded activities rather than fetched
  * separately and stitched together in JavaScript, which would make pagination
  * across the three sources incorrect.
+ *
+ * Raw SQL, deliberately. The shape is a three-branch UNION ALL in which every
+ * branch has to coerce its columns to one common type (`NULL::text`,
+ * `NULL::uuid`, `'{}'::jsonb`) so the branches line up. Expressed through the
+ * builder, nearly every column would become a `sql` fragment anyway - more code
+ * producing the same string, and the string is the part worth reading.
  */
 const TIMELINE_SOURCE = `
   SELECT 'activity'::text AS kind,
@@ -367,28 +448,33 @@ export async function listContactTimeline(
 
 interface NoteRow {
   id: string;
-  contact_id: string;
+  contactId: string;
   body: string;
-  created_at: Date;
-  author_id: string | null;
-  author_name: string | null;
-  author_avatar_url: string | null;
+  createdAt: Date;
+  authorId: string | null;
+  authorName: string | null;
+  authorAvatarUrl: string | null;
 }
 
 function mapNote(row: NoteRow): ContactNote {
   return {
     id: row.id,
-    contactId: row.contact_id,
+    contactId: row.contactId,
     body: row.body,
-    author: row.author_id && row.author_name ? { id: row.author_id, name: row.author_name, avatarUrl: row.author_avatar_url } : null,
-    createdAt: toIsoRequired(row.created_at),
+    author: row.authorId && row.authorName ? { id: row.authorId, name: row.authorName, avatarUrl: row.authorAvatarUrl } : null,
+    createdAt: toIsoRequired(row.createdAt),
   };
 }
 
-const NOTE_COLUMNS = `
-  n.id, n.contact_id, n.body, n.created_at, n.author_id,
-  u.name AS author_name, u.avatar_url AS author_avatar_url
-`;
+const noteColumns = {
+  id: contactNotes.id,
+  contactId: contactNotes.contactId,
+  body: contactNotes.body,
+  createdAt: contactNotes.createdAt,
+  authorId: contactNotes.authorId,
+  authorName: users.name,
+  authorAvatarUrl: users.avatarUrl,
+};
 
 export async function listContactNotes(
   workspaceId: string,
@@ -396,66 +482,100 @@ export async function listContactNotes(
   input: { page?: number; pageSize?: number },
 ): Promise<Paginated<ContactNote>> {
   const page = normalizePage(input);
-  const [rows, countRow] = await Promise.all([
-    query<NoteRow>(
-      `SELECT ${NOTE_COLUMNS}
-       FROM contact_notes n
-       LEFT JOIN users u ON u.id = n.author_id
-       WHERE n.workspace_id = $1 AND n.contact_id = $2
-       ORDER BY n.created_at DESC, n.id DESC
-       LIMIT $3 OFFSET $4`,
-      [workspaceId, contactId, page.pageSize, page.offset],
+  const where = and(eq(contactNotes.workspaceId, workspaceId), eq(contactNotes.contactId, contactId));
+
+  const [rows, totals] = await Promise.all([
+    withDb((db) =>
+      db
+        .select(noteColumns)
+        .from(contactNotes)
+        .leftJoin(users, eq(users.id, contactNotes.authorId))
+        .where(where)
+        .orderBy(desc(contactNotes.createdAt), desc(contactNotes.id))
+        .limit(page.pageSize)
+        .offset(page.offset),
     ),
-    queryOne<{ count: string }>("SELECT count(*) AS count FROM contact_notes WHERE workspace_id = $1 AND contact_id = $2", [
-      workspaceId,
-      contactId,
-    ]),
+    withDb((db) => db.select({ total: count() }).from(contactNotes).where(where)),
   ]);
-  return toPaginated(rows.map(mapNote), Number(countRow?.count ?? 0), page);
+  return toPaginated(rows.map(mapNote), totals[0]?.total ?? 0, page);
 }
 
 export async function insertContactNote(
   input: { workspaceId: string; contactId: string; authorId: string; body: string },
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<ContactNote> {
-  const row = await queryOne<{ id: string }>(
-    `INSERT INTO contact_notes (workspace_id, contact_id, author_id, body) VALUES ($1, $2, $3, $4) RETURNING id`,
-    [input.workspaceId, input.contactId, input.authorId, input.body],
+  const inserted = await withDb(
+    (db) =>
+      db
+        .insert(contactNotes)
+        .values({
+          workspaceId: input.workspaceId,
+          contactId: input.contactId,
+          authorId: input.authorId,
+          body: input.body,
+        })
+        .returning({ id: contactNotes.id }),
     client,
   );
-  if (!row) throw new Error("Failed to insert contact note");
-  const created = await queryOne<NoteRow>(
-    `SELECT ${NOTE_COLUMNS} FROM contact_notes n LEFT JOIN users u ON u.id = n.author_id WHERE n.workspace_id = $1 AND n.id = $2`,
-    [input.workspaceId, row.id],
+  const id = inserted[0]?.id;
+  if (!id) throw new Error("Failed to insert contact note");
+
+  const created = await withDb(
+    (db) =>
+      db
+        .select(noteColumns)
+        .from(contactNotes)
+        .leftJoin(users, eq(users.id, contactNotes.authorId))
+        .where(and(eq(contactNotes.workspaceId, input.workspaceId), eq(contactNotes.id, id)))
+        .limit(1),
     client,
   );
-  if (!created) throw new Error("Contact note vanished after insert");
-  return mapNote(created);
+  if (!created[0]) throw new Error("Contact note vanished after insert");
+  return mapNote(created[0]);
 }
 
 export async function findContactNoteOwner(
   workspaceId: string,
   contactId: string,
   noteId: string,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<{ id: string; authorId: string | null } | null> {
-  const row = await queryOne<{ id: string; author_id: string | null }>(
-    "SELECT id, author_id FROM contact_notes WHERE workspace_id = $1 AND contact_id = $2 AND id = $3",
-    [workspaceId, contactId, noteId],
+  const rows = await withDb(
+    (db) =>
+      db
+        .select({ id: contactNotes.id, authorId: contactNotes.authorId })
+        .from(contactNotes)
+        .where(
+          and(
+            eq(contactNotes.workspaceId, workspaceId),
+            eq(contactNotes.contactId, contactId),
+            eq(contactNotes.id, noteId),
+          ),
+        )
+        .limit(1),
     client,
   );
-  return row ? { id: row.id, authorId: row.author_id } : null;
+  return rows[0] ?? null;
 }
 
 export async function deleteContactNoteRow(
   workspaceId: string,
   contactId: string,
   noteId: string,
-  client?: Queryable,
+  client?: DatabaseClient,
 ): Promise<boolean> {
-  const rows = await query<{ id: string }>(
-    "DELETE FROM contact_notes WHERE workspace_id = $1 AND contact_id = $2 AND id = $3 RETURNING id",
-    [workspaceId, contactId, noteId],
+  const rows = await withDb(
+    (db) =>
+      db
+        .delete(contactNotes)
+        .where(
+          and(
+            eq(contactNotes.workspaceId, workspaceId),
+            eq(contactNotes.contactId, contactId),
+            eq(contactNotes.id, noteId),
+          ),
+        )
+        .returning({ id: contactNotes.id }),
     client,
   );
   return rows.length > 0;
@@ -465,20 +585,8 @@ export async function deleteContactNoteRow(
 /* Conversations                                                               */
 /* -------------------------------------------------------------------------- */
 
-interface ConversationRow {
-  id: string;
-  title: string | null;
-  status: string;
-  channel: string;
-  message_count: number;
-  last_message_at: Date | null;
-  created_at: Date;
-  chatbot_name: string | null;
-  agent_name: string | null;
-}
-
 /**
- * Conversations are read with this feature's own SQL rather than through the
+ * Conversations are read with this feature's own query rather than through the
  * inbox feature, so the two domains stay independently deployable; the only
  * coupling is the `conversations.contact_id` column itself.
  */
@@ -488,22 +596,33 @@ export async function listContactConversations(
   input: { page?: number; pageSize?: number },
 ): Promise<Paginated<ContactConversation>> {
   const page = normalizePage(input);
-  const [rows, countRow] = await Promise.all([
-    query<ConversationRow>(
-      `SELECT cv.id, cv.title, cv.status::text AS status, cv.channel::text AS channel, cv.message_count,
-              cv.last_message_at, cv.created_at, cb.name AS chatbot_name, ag.name AS agent_name
-       FROM conversations cv
-       LEFT JOIN chatbots cb ON cb.id = cv.chatbot_id
-       LEFT JOIN agents ag ON ag.id = cv.agent_id
-       WHERE cv.workspace_id = $1 AND cv.contact_id = $2
-       ORDER BY coalesce(cv.last_message_at, cv.created_at) DESC, cv.id DESC
-       LIMIT $3 OFFSET $4`,
-      [workspaceId, contactId, page.pageSize, page.offset],
+  const where = and(eq(conversations.workspaceId, workspaceId), eq(conversations.contactId, contactId));
+
+  const [rows, totals] = await Promise.all([
+    withDb((db) =>
+      db
+        .select({
+          id: conversations.id,
+          title: conversations.title,
+          status: conversations.status,
+          channel: conversations.channel,
+          messageCount: conversations.messageCount,
+          lastMessageAt: conversations.lastMessageAt,
+          createdAt: conversations.createdAt,
+          chatbotName: chatbots.name,
+          agentName: agents.name,
+        })
+        .from(conversations)
+        .leftJoin(chatbots, eq(chatbots.id, conversations.chatbotId))
+        .leftJoin(agents, eq(agents.id, conversations.agentId))
+        .where(where)
+        // A thread with no messages yet sorts by when it was created, so the
+        // list has no undated rows at one end.
+        .orderBy(sql`coalesce(${conversations.lastMessageAt}, ${conversations.createdAt}) DESC`, desc(conversations.id))
+        .limit(page.pageSize)
+        .offset(page.offset),
     ),
-    queryOne<{ count: string }>("SELECT count(*) AS count FROM conversations WHERE workspace_id = $1 AND contact_id = $2", [
-      workspaceId,
-      contactId,
-    ]),
+    withDb((db) => db.select({ total: count() }).from(conversations).where(where)),
   ]);
 
   const items = rows.map<ContactConversation>((row) => ({
@@ -511,13 +630,13 @@ export async function listContactConversations(
     title: row.title,
     status: row.status,
     channel: row.channel,
-    messageCount: Number(row.message_count ?? 0),
-    lastMessageAt: toIso(row.last_message_at),
-    createdAt: toIsoRequired(row.created_at),
-    sourceName: row.chatbot_name ?? row.agent_name ?? null,
+    messageCount: Number(row.messageCount ?? 0),
+    lastMessageAt: toIso(row.lastMessageAt),
+    createdAt: toIsoRequired(row.createdAt),
+    sourceName: row.chatbotName ?? row.agentName ?? null,
   }));
 
-  return toPaginated(items, Number(countRow?.count ?? 0), page);
+  return toPaginated(items, totals[0]?.total ?? 0, page);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -529,29 +648,37 @@ export async function loadSummaryMaterial(
   contactId: string,
   limits: { notes: number; messages: number },
 ): Promise<SummaryMaterial> {
-  const [notes, messages] = await Promise.all([
-    query<{ body: string; author_name: string | null }>(
-      `SELECT n.body, u.name AS author_name
-       FROM contact_notes n
-       LEFT JOIN users u ON u.id = n.author_id
-       WHERE n.workspace_id = $1 AND n.contact_id = $2
-       ORDER BY n.created_at DESC
-       LIMIT $3`,
-      [workspaceId, contactId, limits.notes],
+  const [notes, conversationMessages] = await Promise.all([
+    withDb((db) =>
+      db
+        .select({ body: contactNotes.body, authorName: users.name })
+        .from(contactNotes)
+        .leftJoin(users, eq(users.id, contactNotes.authorId))
+        .where(and(eq(contactNotes.workspaceId, workspaceId), eq(contactNotes.contactId, contactId)))
+        .orderBy(desc(contactNotes.createdAt))
+        .limit(limits.notes),
     ),
-    query<{ role: string; content: string }>(
-      `SELECT m.role::text AS role, m.content
-       FROM messages m
-       JOIN conversations cv ON cv.id = m.conversation_id
-       WHERE cv.workspace_id = $1 AND cv.contact_id = $2 AND m.role IN ('user', 'assistant')
-       ORDER BY m.created_at DESC
-       LIMIT $3`,
-      [workspaceId, contactId, limits.messages],
+    // Scoped through the CONVERSATION's workspace, which is the row that
+    // carries the contact link.
+    withDb((db) =>
+      db
+        .select({ role: messages.role, content: messages.content })
+        .from(messages)
+        .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+        .where(
+          and(
+            eq(conversations.workspaceId, workspaceId),
+            eq(conversations.contactId, contactId),
+            inArray(messages.role, ["user", "assistant"]),
+          ),
+        )
+        .orderBy(desc(messages.createdAt))
+        .limit(limits.messages),
     ),
   ]);
 
   return {
-    notes: notes.map((row) => ({ body: row.body, authorName: row.author_name })),
-    messages: messages.map((row) => ({ role: row.role, content: row.content })),
+    notes: notes.map((row) => ({ body: row.body, authorName: row.authorName })),
+    messages: conversationMessages.map((row) => ({ role: row.role, content: row.content })),
   };
 }

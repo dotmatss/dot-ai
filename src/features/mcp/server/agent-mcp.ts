@@ -140,6 +140,17 @@ function unknownTool(ref: string, toolName: string): McpToolResolution {
  * `execute` still refuses properly rather than throwing: a model can ask for
  * anything, and "nothing is attached" is an answer, not an error.
  */
+/**
+ * The context an agent gets when MCP is switched off for the whole turn -
+ * a workflow-started execution, for instance. Identical to having attached
+ * nothing: no declarations reach the model, and a call for an `mcp.*` name is
+ * refused as unknown. Exported so the engine can apply a policy without ever
+ * loading a server bundle it is not going to use.
+ */
+export function disabledAgentMcpContext(): AgentMcpContext {
+  return noMcp();
+}
+
 function noMcp(): AgentMcpContext {
   return {
     tools: [],

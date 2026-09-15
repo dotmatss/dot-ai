@@ -1,17 +1,22 @@
 "use client";
 
-import { UserMinus, Users } from "lucide-react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { MailPlus, UserMinus, Users, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 
 import { AppEmptyState } from "@/components/feedback/app-empty-state";
 import { AppErrorState } from "@/components/feedback/app-error-state";
 import { AppListSkeleton } from "@/components/feedback/app-loading";
+import { AppFormActions, AppFormField, AppFormSection } from "@/components/forms/form-field";
 import { AppAlert } from "@/components/ui/app-alert";
 import { AppAvatar } from "@/components/ui/app-avatar";
 import { AppBadge } from "@/components/ui/app-badge";
 import { AppButton } from "@/components/ui/app-button";
+import { AppCodeBlock } from "@/components/ui/app-code-block";
 import { AppConfirmDialog } from "@/components/ui/app-dialog";
+import { AppInput } from "@/components/ui/app-input";
 import { AppRelativeTime } from "@/components/ui/app-relative-time";
 import { AppSelect } from "@/components/ui/app-select";
 import {
@@ -25,7 +30,7 @@ import {
   AppTableRow,
 } from "@/components/ui/app-table";
 import { AppText } from "@/components/ui/app-typography";
-import { MEMBER_INVITES_UNAVAILABLE_NOTE, MEMBER_ROLE_BADGE } from "@/features/settings/constants";
+import { INVITATION_STATUS_META, INVITE_DELIVERY_NOTE, MEMBER_ROLE_BADGE } from "@/features/settings/constants";
 import {
   assignableRoles,
   canAdministerMember,
@@ -33,11 +38,18 @@ import {
   canRemoveMember,
   type MemberActor,
 } from "@/features/settings/member-rules";
-import { useRemoveMemberMutation, useUpdateMemberRoleMutation } from "@/features/settings/mutations";
+import {
+  useInviteMemberMutation,
+  useRemoveMemberMutation,
+  useRevokeInvitationMutation,
+  useUpdateMemberRoleMutation,
+} from "@/features/settings/mutations";
 import { useMembersQuery } from "@/features/settings/queries";
-import type { MembersOverview, OrganizationMember } from "@/features/settings/types";
+import { inviteMemberFormSchema, type InviteMemberFormValues } from "@/features/settings/schemas";
+import type { MembersOverview, OrganizationInvitation, OrganizationMember } from "@/features/settings/types";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 import { canManage, MEMBER_ROLE_LABELS, type MemberRole } from "@/features/workspaces/roles";
+import { isApiError } from "@/lib/api/api-error";
 
 const COLUMNS = 4;
 
@@ -237,16 +249,152 @@ function MembersTable({ overview }: { overview: MembersOverview }) {
   );
 }
 
-export function MembersPanel() {
-  const query = useMembersQuery();
+/**
+ * Creating an invitation.
+ *
+ * The link renders from `invite.data`, which lives only as long as this
+ * component: the server keeps a hash of the token, so once this unmounts the
+ * URL cannot be recovered and a new invitation has to be created. Saying that
+ * beside the link is the difference between someone copying it now and coming
+ * back for it tomorrow.
+ */
+function InviteForm({ actor }: { actor: MemberActor }) {
+  const invite = useInviteMemberMutation();
+  const roleOptions = assignableRoles(actor.role).map((role) => ({ value: role, label: MEMBER_ROLE_LABELS[role] }));
+
+  const form = useForm<InviteMemberFormValues>({
+    resolver: zodResolver(inviteMemberFormSchema),
+    defaultValues: { email: "", role: "member" },
+  });
+
+  const onSubmit = form.handleSubmit((values) => {
+    invite.mutate(values, {
+      onSuccess: () => form.reset({ email: "", role: values.role }),
+      onError: (error) => {
+        // "Already a member" and "already invited" are both about the address,
+        // so they belong on the field and not only in a toast.
+        if (isApiError(error) && error.status === 409) form.setError("email", { message: error.message });
+      },
+    });
+  });
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* There is no invitations table, so there is nowhere to store a pending
-          invite. Saying so beats a button that cannot work. */}
-      <AppAlert tone="neutral" title="Adding members">
-        {MEMBER_INVITES_UNAVAILABLE_NOTE}
-      </AppAlert>
+    <form onSubmit={onSubmit} noValidate>
+      <AppFormSection
+        title="Invite someone"
+        description="They join this organization and every workspace in it, with the role you pick."
+      >
+        <AppAlert tone="neutral" title="Invitations are shared by link">
+          {INVITE_DELIVERY_NOTE}
+        </AppAlert>
+        <div className="grid gap-3 sm:grid-cols-[1fr_12rem]">
+          <AppFormField label="Email address" required error={form.formState.errors.email?.message}>
+            {(field) => (
+              <AppInput
+                {...field}
+                {...form.register("email")}
+                type="email"
+                autoComplete="off"
+                placeholder="teammate@example.com"
+              />
+            )}
+          </AppFormField>
+          <AppFormField label="Role" error={form.formState.errors.role?.message}>
+            {(field) => <AppSelect {...field} {...form.register("role")} options={roleOptions} />}
+          </AppFormField>
+        </div>
+        <AppFormActions>
+          <AppButton type="submit" loading={invite.isPending} leadingIcon={<MailPlus aria-hidden />}>
+            Create invitation
+          </AppButton>
+        </AppFormActions>
+        {invite.data ? (
+          <div className="flex flex-col gap-2">
+            <AppCodeBlock label={`Invitation link for ${invite.data.invitation.email}`} code={invite.data.inviteUrl} />
+            <AppText size="sm" tone="muted">
+              This link is shown once. If you lose it, revoke the invitation and create a new one.
+            </AppText>
+          </div>
+        ) : null}
+      </AppFormSection>
+    </form>
+  );
+}
+
+function InvitationsTable({ invitations, canRevoke }: { invitations: OrganizationInvitation[]; canRevoke: boolean }) {
+  const revoke = useRevokeInvitationMutation();
+
+  return (
+    <AppFormSection title="Pending invitations" description="Links that have been created but not accepted yet.">
+      {invitations.length === 0 ? (
+        <AppText size="sm" tone="muted">
+          No pending invitations.
+        </AppText>
+      ) : (
+        <AppTableContainer aria-busy={revoke.isPending || undefined}>
+          <AppTable>
+            <AppTableHeader>
+              <AppTableRow>
+                <AppTableHead>Email</AppTableHead>
+                <AppTableHead>Role</AppTableHead>
+                <AppTableHead>Status</AppTableHead>
+                <AppTableHead>Expires</AppTableHead>
+                <AppTableHead>
+                  <span className="sr-only">Actions</span>
+                </AppTableHead>
+              </AppTableRow>
+            </AppTableHeader>
+            <AppTableBody>
+              {invitations.map((invitation) => {
+                const status = INVITATION_STATUS_META[invitation.status];
+                return (
+                  <AppTableRow key={invitation.id}>
+                    <AppTableCell className="truncate font-medium text-foreground">{invitation.email}</AppTableCell>
+                    <AppTableCell>
+                      <RoleBadge role={invitation.role} />
+                    </AppTableCell>
+                    <AppTableCell>
+                      <AppBadge tone={status.tone} variant="soft">
+                        {status.label}
+                      </AppBadge>
+                    </AppTableCell>
+                    <AppTableCell className="whitespace-nowrap text-foreground-muted">
+                      <AppRelativeTime value={invitation.expiresAt} />
+                    </AppTableCell>
+                    <AppTableCell className="w-32 text-right">
+                      {canRevoke ? (
+                        <AppButton
+                          variant="ghost"
+                          size="sm"
+                          disabled={revoke.isPending}
+                          leadingIcon={<X aria-hidden />}
+                          onClick={() => revoke.mutate({ invitationId: invitation.id, email: invitation.email })}
+                        >
+                          Revoke
+                          <span className="sr-only"> the invitation for {invitation.email}</span>
+                        </AppButton>
+                      ) : null}
+                    </AppTableCell>
+                  </AppTableRow>
+                );
+              })}
+            </AppTableBody>
+          </AppTable>
+        </AppTableContainer>
+      )}
+    </AppFormSection>
+  );
+}
+
+export function MembersPanel() {
+  const query = useMembersQuery();
+  const { membership, user } = useWorkspace();
+  const actor: MemberActor = { userId: user.id, role: membership.role };
+  const manages = canManage(membership.role);
+
+  return (
+    <div className="flex flex-col gap-6">
+      {manages ? <InviteForm actor={actor} /> : null}
       {query.isPending ? (
         <AppListSkeleton rows={4} />
       ) : query.isError ? (
@@ -254,7 +402,13 @@ export function MembersPanel() {
           <AppErrorState error={query.error} onRetry={() => void query.refetch()} size="sm" />
         </AppTableContainer>
       ) : (
-        <MembersTable overview={query.data} />
+        <>
+          <MembersTable overview={query.data} />
+          {/* The server sends no invitations to anyone who cannot manage them,
+              so rendering the section would only ever say "none" - which reads
+              as a fact about the organization rather than about the reader. */}
+          {manages ? <InvitationsTable invitations={query.data.invitations} canRevoke /> : null}
+        </>
       )}
     </div>
   );

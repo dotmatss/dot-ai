@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, FlaskConical, MoreHorizontal, ShieldCheck, Trash2, Wrench } from "lucide-react";
+import { Cpu, FlaskConical, MoreHorizontal, Network, ShieldCheck, Trash2, Wrench } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -63,6 +63,11 @@ function AgentRow({ agent, onDelete }: { agent: AgentSummary; onDelete?: (agent:
       <AppTableCell>
         <span className="flex flex-wrap items-center gap-1.5">
           <AgentStatusBadge status={agent.status} />
+          {agent.canDelegate ? (
+            <AppBadge tone="info" size="sm" icon={<Network aria-hidden />}>
+              Delegates{agent.delegateCount > 0 ? ` · ${agent.delegateCount}` : ""}
+            </AppBadge>
+          ) : null}
           {agent.requiresApproval ? (
             <AppBadge tone="warning" size="sm" icon={<ShieldCheck aria-hidden />}>
               Approval

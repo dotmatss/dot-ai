@@ -43,7 +43,7 @@ function Block({ block }: { block: DocBlock }) {
 
     case "paragraph":
       return (
-        <p className="mt-4 text-[15px] leading-7 text-foreground-secondary">
+        <p className="mt-4 text-reading leading-7 text-foreground-secondary">
           <InlineText text={block.text} />
         </p>
       );
@@ -54,8 +54,8 @@ function Block({ block }: { block: DocBlock }) {
         <Tag
           className={
             block.ordered
-              ? "mt-4 flex list-decimal flex-col gap-2 pl-5 text-[15px] leading-7 text-foreground-secondary marker:text-foreground-subtle"
-              : "mt-4 flex list-disc flex-col gap-2 pl-5 text-[15px] leading-7 text-foreground-secondary marker:text-foreground-subtle"
+              ? "mt-4 flex list-decimal flex-col gap-2 pl-5 text-reading leading-7 text-foreground-secondary marker:text-foreground-subtle"
+              : "mt-4 flex list-disc flex-col gap-2 pl-5 text-reading leading-7 text-foreground-secondary marker:text-foreground-subtle"
           }
         >
           {block.items.map((item, index) => (

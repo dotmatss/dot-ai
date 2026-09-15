@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 
 import { getServerEnv } from "@/config/env";
 
@@ -119,12 +119,14 @@ export function secretContext(workspaceId: string, provider: string): string {
   return `workspace:${workspaceId}:integration:${provider}`;
 }
 
-/** Length-safe constant-time comparison for secret material (hashes, signatures). */
-export function secretsMatch(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  // timingSafeEqual throws on a length mismatch; comparing lengths first leaks
-  // only the length, which is fixed for every value compared here.
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+/**
+ * The binding context for one outbound credential (migration 0026).
+ *
+ * Distinct from `secretContext` above by the `credential` segment, so an
+ * envelope sealed for a catalogue provider cannot be opened as a standalone
+ * credential or the reverse - the two are reached by different code paths and
+ * should not be interchangeable even within one workspace.
+ */
+export function credentialSecretContext(workspaceId: string, credentialId: string): string {
+  return `workspace:${workspaceId}:credential:${credentialId}`;
 }

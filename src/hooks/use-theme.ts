@@ -106,6 +106,21 @@ function subscribe(onStoreChange: () => void): () => void {
   };
 }
 
+/**
+ * Re-asserts the stored theme on the document element.
+ *
+ * The boot script in <head> already does this before first paint, and on a
+ * normal load nothing needs to do it again. But `<html>`'s class list belongs to
+ * the root layout's JSX, so any time React builds that tree instead of
+ * hydrating it - a hydration mismatch with no nearer boundary regenerates
+ * everything from the root - React writes its own class list over the script's
+ * work and the page drops back to light. Called from a layout effect, this puts
+ * the theme back before the browser paints the rebuilt tree.
+ */
+export function syncDocumentTheme(): void {
+  applyTheme(document.documentElement, resolveTheme(readStoredTheme(), systemPrefersDark()));
+}
+
 export function setTheme(next: Theme): void {
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, next);

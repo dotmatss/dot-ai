@@ -65,13 +65,17 @@ export async function AnalyticsTokenUsage({ workspaceId, period }: { workspaceId
         />
       ) : (
         <>
+          {/* No `formatValue`: this is a Server Component and AppBarChart is a
+              Client Component, so a function cannot cross the boundary. The
+              chart already defaults to the same `formatNumber`, which is why
+              passing it was both redundant and fatal - and why the crash only
+              appeared once a workspace had token usage to draw. */}
           <AppBarChart
             data={data}
             title={`Tokens in and tokens out per ${usage.bucket}, last ${days} days`}
             valueLabel="Tokens in"
             compareLabel="Tokens out"
             height={220}
-            formatValue={formatNumber}
           />
           {usage.byChatbot.length === 0 ? (
             <p className="text-sm text-foreground-muted">

@@ -115,14 +115,14 @@ async function main() {
   console.log(`[verify] lock acquired${options.scope.length ? ` · scope: ${options.scope.join(", ")}` : ""}`);
 
   if (!options.skipTypes) {
-    const typegen = await run("npx", ["next", "typegen"]);
+    const typegen = await run("pnpm", ["exec", "next", "typegen"]);
     if (typegen.code !== 0) {
       report("next typegen", false, typegen.out.trim().split("\n").slice(-20).join("\n"));
     } else {
       report("next typegen", true);
 
       // Incremental compilation is disabled so parallel runs cannot corrupt .tsbuildinfo.
-      const tsc = await run("npx", ["tsc", "--noEmit", "--incremental", "false"]);
+      const tsc = await run("pnpm", ["exec", "tsc", "--noEmit", "--incremental", "false"]);
       const lines = tsc.out.split("\n").filter((line) => /error TS\d+/.test(line));
       const scoped = lines.filter(inScope);
       const detail = [
@@ -143,7 +143,7 @@ async function main() {
     // ESLint treats CLI arguments as glob patterns, and route directories such as
     // `src/app/w/[workspaceSlug]/...` contain bracket character classes. Linting the
     // whole project and filtering the report by scope avoids that entirely.
-    const eslint = await run("npx", ["eslint", "."]);
+    const eslint = await run("pnpm", ["exec", "eslint", "."]);
     const inScopeProblems = [];
     const outOfScopeFiles = new Set();
     let currentFile = null;
@@ -169,11 +169,11 @@ async function main() {
   }
 
   if (!options.skipTests) {
-    const args = ["vitest", "run"];
+    const args = ["exec", "vitest", "run"];
     // Vitest takes several positional filters, so "a|b" means "either".
     const filters = options.tests ? options.tests.split("|").map((f) => f.trim()).filter(Boolean) : [];
     args.push(...filters);
-    const vitest = await run("npx", args);
+    const vitest = await run("pnpm", args);
     // A filter that matches nothing exits non-zero and looks like a failure;
     // say what actually happened instead.
     const noMatch = /No test files found/.test(vitest.out);

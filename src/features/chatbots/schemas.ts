@@ -43,6 +43,13 @@ export const updateChatbotSchema = z
     welcomeMessage: z.string().trim().min(1, { error: "Enter a welcome message" }).max(500),
     status: chatbotStatusSchema,
     modelConfig: chatbotModelConfigSchema,
+    /**
+     * The agent this chatbot deploys. `null` unlinks it and returns the chatbot
+     * to its own instructions, model and collections, all of which are kept.
+     * Ownership and lifecycle are checked server-side; a uuid here proves
+     * nothing about who may use it.
+     */
+    agentId: z.uuid().nullable(),
     appearance: chatbotAppearanceSchema,
     allowedDomains: z.array(allowedDomainSchema).max(50, { error: "Up to 50 domains" }),
     collectionIds: z.array(z.uuid()).max(20),

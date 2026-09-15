@@ -30,7 +30,7 @@ export function ThemeSelector({ className }: { className?: string }) {
 
   return (
     <fieldset className={cn("min-w-0", className)}>
-      <legend className="text-caption font-medium uppercase tracking-[0.08em] text-foreground-muted">Theme</legend>
+      <legend className="text-caption font-medium uppercase tracking-caption text-foreground-muted">Theme</legend>
       <div className="mt-2 inline-flex rounded-lg border border-border bg-surface p-0.5 shadow-xs">
         {OPTIONS.map(({ value, label, Icon }) => (
           <label key={value} className="cursor-pointer">

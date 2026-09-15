@@ -1,13 +1,16 @@
 import "server-only";
 
+import { and, eq } from "drizzle-orm";
+
 import { getServerEnv } from "@/config/env";
 import { findChatbotByEmbedKey } from "@/features/chatbots/server/chatbot-repository";
 import type { Chatbot, ChatbotAppearance } from "@/features/chatbots/types";
 import { isOriginAllowed, originFromReferer } from "@/features/embed/server/domain-match";
 import { mintEmbedToken } from "@/features/embed/server/embed-token";
-import { canEdit, type MemberRole } from "@/features/workspaces/roles";
+import { canEdit } from "@/features/workspaces/roles";
 import { getAuthContext } from "@/server/auth/dal";
-import { queryOne } from "@/server/db/client";
+import { withDb } from "@/server/db/client";
+import { organizationMembers, workspaces } from "@/server/db/schema";
 
 /** The subset of chatbot configuration that is safe to send to visitors. */
 export interface PublicChatbotConfig {
@@ -39,13 +42,15 @@ export function toPublicConfig(chatbot: Chatbot): PublicChatbotConfig {
  * use the playground, must not get one either.
  */
 async function canPreviewWorkspace(userId: string, workspaceId: string): Promise<boolean> {
-  const row = await queryOne<{ role: MemberRole }>(
-    `SELECT m.role FROM workspaces w
-     JOIN organization_members m ON m.organization_id = w.organization_id
-     WHERE w.id = $1 AND m.user_id = $2`,
-    [workspaceId, userId],
+  const rows = await withDb((db) =>
+    db
+      .select({ role: organizationMembers.role })
+      .from(workspaces)
+      .innerJoin(organizationMembers, eq(organizationMembers.organizationId, workspaces.organizationId))
+      .where(and(eq(workspaces.id, workspaceId), eq(organizationMembers.userId, userId)))
+      .limit(1),
   );
-  return row ? canEdit(row.role) : false;
+  return rows[0] ? canEdit(rows[0].role) : false;
 }
 
 /**

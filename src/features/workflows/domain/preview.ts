@@ -194,6 +194,9 @@ const CATEGORY_ACCENTS: Partial<Record<NodeCategory, PreviewAccent>> = {
   trigger: "trigger",
   input: "input",
   ai: "ai",
+  // Same visual family as `ai`: both call a model. The tag below is what says
+  // this one hands the whole task to an agent rather than a bare prompt.
+  agent: "ai",
   condition: "condition",
   tool: "tool",
   action: "action",
@@ -214,6 +217,9 @@ function tagsFor(node: WorkflowNode, effect: NodeEffect, unreachable: boolean): 
 
   if (category === "ai") {
     tags.push({ label: "AI", title: "This step calls a language model." });
+  }
+  if (category === "agent") {
+    tags.push({ label: "Agent", title: "This step runs one of your agents on its own instructions and knowledge. MCP tools are off inside workflows." });
   }
   if (effect === "simulated") {
     // The executor records what this step would have done. Saying so here is

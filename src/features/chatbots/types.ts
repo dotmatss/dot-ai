@@ -25,19 +25,29 @@ export interface ChatbotSummary {
   status: ChatbotStatus;
   conversationCount: number;
   collectionCount: number;
+  /** The agent this chatbot deploys, or null when it is configured standalone. */
+  agentId: string | null;
+  agentName: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface Chatbot extends ChatbotSummary {
   workspaceId: string;
+  /**
+   * The chatbot's own AI configuration. Live only while `agentId` is null; an
+   * agent-backed chatbot answers from the agent's instructions, model and
+   * collections instead. These are kept rather than cleared so unlinking
+   * restores exactly the previous behaviour. See `chatbot-runtime.ts`.
+   */
   instructions: string;
-  welcomeMessage: string;
   modelConfig: ChatbotModelConfig;
+  collectionIds: string[];
+  /** Channel configuration, always the chatbot's own. */
+  welcomeMessage: string;
   appearance: ChatbotAppearance;
   allowedDomains: string[];
   embedKey: string;
-  collectionIds: string[];
 }
 
 export interface ChatbotListFilters {

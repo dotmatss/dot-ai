@@ -62,6 +62,8 @@ export type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
  * See `src/server/db/schema/index.ts` and `docs/orm-evaluation.md`.
  */
 export type Database = NodePgDatabase<typeof schema>;
+/** A pool or a checked-out client that Drizzle can bind to. */
+export type DatabaseClient = Pool | PoolClient;
 
 export function getDb(): Database {
   if (!globalThis.__dotDrizzle) {
@@ -78,7 +80,7 @@ export function getDb(): Database {
  * that same connection see it. Reaching for `getDb()` inside a workspace
  * transaction would silently escape both the transaction and the setting.
  */
-export function dbFor(client: PoolClient): Database {
+export function dbFor(client: DatabaseClient): Database {
   return drizzle(client, { schema });
 }
 
@@ -87,7 +89,7 @@ export function dbFor(client: PoolClient): Database {
  * violations become 409s, missing references 400s, and connection failures
  * `DatabaseUnavailableError`. Pass the transaction client when inside one.
  */
-export async function withDb<T>(fn: (db: Database) => Promise<T>, client?: PoolClient): Promise<T> {
+export async function withDb<T>(fn: (db: Database) => Promise<T>, client?: DatabaseClient): Promise<T> {
   try {
     return await fn(client ? dbFor(client) : getDb());
   } catch (error) {
@@ -116,10 +118,34 @@ export function translateDbError(error: unknown): Error {
       cause: error,
     });
   }
-  const code = (error as { code?: string } | null)?.code;
+  const code = sqlStateOf(error);
   if (code === "23505") return ApiError.conflict("A record with the same unique value already exists");
   if (code === "23503") return ApiError.badRequest("Referenced record does not exist");
   return error instanceof Error ? error : new Error(String(error));
+}
+
+/**
+ * Finds the PostgreSQL SQLSTATE on an error, wrapped or not.
+ *
+ * `query()` gets the driver's error directly, but Drizzle wraps it in a
+ * `DrizzleQueryError` that carries the statement and its parameters and leaves
+ * `code` undefined - so reading `error.code` translated a raw `pg` failure and
+ * silently missed the identical failure raised through `withDb()`. That made
+ * the documented contract ("unique violations become 409s") true of one path
+ * and false of the other, which is worse than either, because a repository
+ * migrated to Drizzle stopped returning 409s without anything failing.
+ *
+ * The chain is walked with a depth bound rather than to exhaustion: a cyclic
+ * `cause` is not a thing this should hang on.
+ */
+function sqlStateOf(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 export async function query<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: Queryable): Promise<T[]> {

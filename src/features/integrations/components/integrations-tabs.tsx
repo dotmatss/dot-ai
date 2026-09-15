@@ -13,8 +13,9 @@ export function IntegrationsTabs() {
       label="Integration sections"
       items={[
         { href: base as Route, label: "Catalog" },
-        { href: `${base}/api-keys` as Route, label: "API keys" },
-        { href: `${base}/embeds` as Route, label: "Embeds" },
+        // Everything here is outbound. API keys and Embeds are the inbound
+        // direction and live under Developer.
+        { href: `${base}/credentials` as Route, label: "Credentials" },
         { href: `${base}/mcp` as Route, label: "MCP" },
       ]}
     />

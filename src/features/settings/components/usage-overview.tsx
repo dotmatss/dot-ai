@@ -15,7 +15,7 @@ import {
   AppTableRow,
 } from "@/components/ui/app-table";
 import { AppHeading, AppText } from "@/components/ui/app-typography";
-import { CURRENT_PLAN, USAGE_KIND_META } from "@/features/analytics/constants";
+import { USAGE_KIND_META } from "@/features/analytics/constants";
 import { USAGE_KINDS, type UsageKind } from "@/features/analytics/types";
 import type { UsageKindTotal, WorkspaceUsageSummary } from "@/features/settings/types";
 import { formatDate } from "@/lib/format/date";
@@ -63,7 +63,18 @@ function UsageRow({ total, max }: { total: UsageKindTotal; max: number }) {
   );
 }
 
-export function UsageOverview({ usage }: { usage: WorkspaceUsageSummary }) {
+/**
+ * The plan is passed in rather than read here: this is a presentational Server
+ * Component in the settings feature, and the plan belongs to billing. The page
+ * resolves it through `getPlanLabel()` and hands it over.
+ */
+export function UsageOverview({
+  usage,
+  plan,
+}: {
+  usage: WorkspaceUsageSummary;
+  plan: { name: string; description: string };
+}) {
   // Largest first: the bar is read against the top row, so the scale is obvious.
   const totals = [...usage.totals].sort((a, b) => b.total - a.total);
   const max = Math.max(1, ...totals.map((total) => total.total));
@@ -77,14 +88,14 @@ export function UsageOverview({ usage }: { usage: WorkspaceUsageSummary }) {
         </AppHeading>
         <AppCard padding="md" className="flex flex-col gap-2">
           <span className="flex items-center gap-2">
-            <AppBadge tone="inverted">{CURRENT_PLAN.name}</AppBadge>
+            <AppBadge tone="inverted">{plan.name}</AppBadge>
             <AppText size="sm" tone="muted">
-              {CURRENT_PLAN.description}
+              {plan.description}
             </AppText>
           </span>
           <AppText size="sm" tone="muted">
-            Billing is not enabled yet: usage is metered so you can see it, and nothing here is charged, capped or
-            invoiced. There is no plan to change and no card to add.
+            Nothing here is charged or invoiced: there is no payment processor in this system. What a plan does control
+            is which limits apply, on the Billing tab.
           </AppText>
         </AppCard>
       </section>

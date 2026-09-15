@@ -12,7 +12,7 @@
  * both directions - a column present in only one of them is a failure either
  * way.
  *
- *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" npx vitest run schema-drift
+ *   DATABASE_URL="postgresql://postgres@127.0.0.1:5433/dot_dev" pnpm exec vitest run schema-drift
  */
 import { is } from "drizzle-orm";
 import { getTableConfig, isPgEnum, PgTable, type PgColumn, type PgEnum } from "drizzle-orm/pg-core";
@@ -31,6 +31,14 @@ let client: pg.Client;
  *
  * PostgreSQL reports `udt_name` ("timestamptz", "int4", "_text"); Drizzle
  * reports SQL syntax ("timestamp with time zone", "integer", "text[]").
+ *
+ * Type MODIFIERS are part of the comparison, not stripped from it. `udt_name`
+ * never carries one - a `numeric(12, 4)` column reports plain "numeric" - so
+ * the live side rebuilds it from `numeric_precision` / `numeric_scale` (see
+ * `liveType`). The alternative, dropping the modifier from both sides, would
+ * let a cost column silently become `numeric(10, 2)` in the database while the
+ * schema still claimed four decimal places; these columns are multiplied by
+ * token counts to produce money, so that is exactly the drift worth catching.
  */
 const TYPE_ALIASES: Record<string, string> = {
   "timestamp with time zone": "timestamptz",
@@ -50,7 +58,32 @@ const TYPE_ALIASES: Record<string, string> = {
 function canonicalType(sqlType: string): string {
   const lower = sqlType.toLowerCase().trim();
   if (lower.endsWith("[]")) return `_${canonicalType(lower.slice(0, -2))}`;
+
+  // Split a trailing modifier off the base name so the alias table still
+  // applies: "numeric(12, 4)" -> base "numeric", modifier "12,4".
+  const match = /^([^(]+)\((.+)\)$/.exec(lower);
+  if (match?.[1] && match[2]) {
+    const base = match[1].trim();
+    return `${TYPE_ALIASES[base] ?? base}(${match[2].replace(/\s+/g, "")})`;
+  }
   return TYPE_ALIASES[lower] ?? lower;
+}
+
+/**
+ * The live column's type, with its modifier restored.
+ *
+ * Only for the types where a modifier carries meaning. `numeric_precision` is
+ * also populated for the integer and float types (int4 reports 32), so keying
+ * off it blindly would invent an `int4(32)` that matches nothing.
+ */
+function liveType(column: { udtName: string; numericPrecision: number | null; numericScale: number | null; maxLength: number | null }): string {
+  if (column.udtName === "numeric" && column.numericPrecision !== null) {
+    return `numeric(${column.numericPrecision},${column.numericScale ?? 0})`;
+  }
+  if ((column.udtName === "varchar" || column.udtName === "bpchar") && column.maxLength !== null) {
+    return `${column.udtName}(${column.maxLength})`;
+  }
+  return column.udtName;
 }
 
 /**
@@ -82,6 +115,9 @@ function describedEnums(): Array<{ name: string; values: readonly string[] }> {
 interface DbColumn {
   name: string;
   udtName: string;
+  numericPrecision: number | null;
+  numericScale: number | null;
+  maxLength: number | null;
   nullable: boolean;
 }
 
@@ -93,15 +129,31 @@ beforeAll(async () => {
   client = new pg.Client({ connectionString });
   await client.connect();
 
-  const columns = await client.query<{ table_name: string; column_name: string; udt_name: string; is_nullable: string }>(
-    `SELECT table_name, column_name, udt_name, is_nullable
+  const columns = await client.query<{
+    table_name: string;
+    column_name: string;
+    udt_name: string;
+    numeric_precision: number | null;
+    numeric_scale: number | null;
+    character_maximum_length: number | null;
+    is_nullable: string;
+  }>(
+    `SELECT table_name, column_name, udt_name,
+            numeric_precision, numeric_scale, character_maximum_length, is_nullable
      FROM information_schema.columns
      WHERE table_schema = 'public'
      ORDER BY table_name, ordinal_position`,
   );
   for (const row of columns.rows) {
     const list = liveColumns.get(row.table_name) ?? [];
-    list.push({ name: row.column_name, udtName: row.udt_name, nullable: row.is_nullable === "YES" });
+    list.push({
+      name: row.column_name,
+      udtName: row.udt_name,
+      numericPrecision: row.numeric_precision,
+      numericScale: row.numeric_scale,
+      maxLength: row.character_maximum_length,
+      nullable: row.is_nullable === "YES",
+    });
     liveColumns.set(row.table_name, list);
   }
 
@@ -168,8 +220,9 @@ describe.skipIf(!hasDatabase)("schema description matches the database", () => {
         const real = actual.get(column.name);
         if (!real) continue;
         const described = canonicalType(column.getSQLType());
-        if (described !== real.udtName) {
-          problems.push(`${name}.${column.name}: schema says ${described}, database says ${real.udtName}`);
+        const actualType = liveType(real);
+        if (described !== actualType) {
+          problems.push(`${name}.${column.name}: schema says ${described}, database says ${actualType}`);
         }
       }
     }

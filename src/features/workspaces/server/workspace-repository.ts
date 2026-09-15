@@ -1,127 +1,155 @@
 import "server-only";
 
+import { and, asc, eq } from "drizzle-orm";
 import type { PoolClient } from "pg";
 
+import type { OrganizationStatus } from "@/features/platform/types";
 import type { MemberRole } from "@/features/workspaces/roles";
 import type { OrganizationSummary, WorkspaceMembership, WorkspaceSummary } from "@/features/workspaces/types";
 import { ApiError } from "@/lib/api/api-error";
 import { slugify, withSuffix } from "@/lib/slug";
-import { query, queryOne, type Queryable } from "@/server/db/client";
+import { withDb, type DatabaseClient } from "@/server/db/client";
+import { organizationMembers, organizations, workspaces } from "@/server/db/schema";
 import { toIsoRequired } from "@/server/db/sql";
 
-interface MembershipRow {
-  workspace_id: string;
-  workspace_name: string;
-  workspace_slug: string;
-  workspace_created_at: Date;
-  organization_id: string;
-  organization_name: string;
-  organization_slug: string;
+function mapMembership(row: {
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  workspaceCreatedAt: Date;
+  organizationId: string;
+  organizationName: string;
+  organizationSlug: string;
+  organizationStatus: OrganizationStatus;
   role: MemberRole;
-}
-
-function mapMembership(row: MembershipRow): WorkspaceMembership {
+}): WorkspaceMembership {
   return {
     workspace: {
-      id: row.workspace_id,
-      organizationId: row.organization_id,
-      name: row.workspace_name,
-      slug: row.workspace_slug,
-      createdAt: toIsoRequired(row.workspace_created_at),
+      id: row.workspaceId,
+      organizationId: row.organizationId,
+      name: row.workspaceName,
+      slug: row.workspaceSlug,
+      createdAt: toIsoRequired(row.workspaceCreatedAt),
     },
-    organization: { id: row.organization_id, name: row.organization_name, slug: row.organization_slug },
+    organization: { id: row.organizationId, name: row.organizationName, slug: row.organizationSlug },
     role: row.role,
+    organizationStatus: row.organizationStatus,
   };
 }
 
 export async function listUserWorkspaces(userId: string): Promise<WorkspaceMembership[]> {
-  const rows = await query<MembershipRow>(
-    `SELECT w.id AS workspace_id, w.name AS workspace_name, w.slug AS workspace_slug, w.created_at AS workspace_created_at,
-            o.id AS organization_id, o.name AS organization_name, o.slug AS organization_slug, m.role
-     FROM organization_members m
-     JOIN organizations o ON o.id = m.organization_id
-     JOIN workspaces w ON w.organization_id = o.id
-     WHERE m.user_id = $1
-     ORDER BY o.name, w.name`,
-    [userId],
+  const rows = await withDb((db) =>
+    db
+      .select({
+        workspaceId: workspaces.id,
+        workspaceName: workspaces.name,
+        workspaceSlug: workspaces.slug,
+        workspaceCreatedAt: workspaces.createdAt,
+        organizationId: organizations.id,
+        organizationName: organizations.name,
+        organizationSlug: organizations.slug,
+        organizationStatus: organizations.status,
+        role: organizationMembers.role,
+      })
+      .from(organizationMembers)
+      .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
+      .innerJoin(workspaces, eq(workspaces.organizationId, organizations.id))
+      .where(eq(organizationMembers.userId, userId))
+      .orderBy(asc(organizations.name), asc(workspaces.name)),
   );
   return rows.map(mapMembership);
 }
 
 export async function listUserOrganizations(userId: string): Promise<Array<OrganizationSummary & { role: MemberRole }>> {
-  const rows = await query<{ id: string; name: string; slug: string; role: MemberRole }>(
-    `SELECT o.id, o.name, o.slug, m.role
-     FROM organization_members m JOIN organizations o ON o.id = m.organization_id
-     WHERE m.user_id = $1 ORDER BY o.name`,
-    [userId],
+  return withDb((db) =>
+    db
+      .select({ id: organizations.id, name: organizations.name, slug: organizations.slug, role: organizationMembers.role })
+      .from(organizationMembers)
+      .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
+      .where(and(eq(organizationMembers.userId, userId), eq(organizations.status, "active")))
+      .orderBy(asc(organizations.name)),
   );
-  return rows;
 }
 
-async function uniqueSlug(table: "organizations" | "workspaces", base: string, client: Queryable): Promise<string> {
+async function uniqueSlug(table: "organizations" | "workspaces", base: string, client: DatabaseClient): Promise<string> {
   const root = slugify(base);
   for (let attempt = 0; attempt < 50; attempt++) {
     const candidate = withSuffix(root, attempt);
-    const existing = await queryOne<{ id: string }>(`SELECT id FROM ${table} WHERE slug = $1`, [candidate], client);
-    if (!existing) return candidate;
+    const rows = await withDb(
+      (db) =>
+        table === "organizations"
+          ? db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, candidate)).limit(1)
+          : db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, candidate)).limit(1),
+      client,
+    );
+    if (rows.length === 0) return candidate;
   }
   throw ApiError.conflict("Could not allocate a unique slug");
 }
 
 export async function insertOrganization(client: PoolClient, input: { name: string; ownerId: string }): Promise<OrganizationSummary> {
   const slug = await uniqueSlug("organizations", input.name, client);
-  const org = await queryOne<{ id: string; name: string; slug: string }>(
-    "INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id, name, slug",
-    [input.name, slug],
+  const rows = await withDb(
+    (db) => db.insert(organizations).values({ name: input.name, slug }).returning({ id: organizations.id, name: organizations.name, slug: organizations.slug }),
     client,
   );
+  const org = rows[0];
   if (!org) throw new Error("Failed to create organization");
-  await query(
-    "INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'owner')",
-    [org.id, input.ownerId],
+  await withDb(
+    (db) => db.insert(organizationMembers).values({ organizationId: org.id, userId: input.ownerId, role: "owner" }),
     client,
   );
   return org;
 }
 
-export async function insertWorkspace(input: { organizationId: string; name: string }, client: Queryable): Promise<WorkspaceSummary> {
+export async function insertWorkspace(input: { organizationId: string; name: string }, client: DatabaseClient): Promise<WorkspaceSummary> {
   const slug = await uniqueSlug("workspaces", input.name, client);
-  const row = await queryOne<{ id: string; organization_id: string; name: string; slug: string; created_at: Date }>(
-    `INSERT INTO workspaces (organization_id, name, slug) VALUES ($1, $2, $3)
-     RETURNING id, organization_id, name, slug, created_at`,
-    [input.organizationId, input.name, slug],
+  const rows = await withDb(
+    (db) =>
+      db
+        .insert(workspaces)
+        .values({ organizationId: input.organizationId, name: input.name, slug })
+        .returning({ id: workspaces.id, organizationId: workspaces.organizationId, name: workspaces.name, slug: workspaces.slug, createdAt: workspaces.createdAt }),
     client,
   );
+  const row = rows[0];
   if (!row) throw new Error("Failed to create workspace");
-  return { id: row.id, organizationId: row.organization_id, name: row.name, slug: row.slug, createdAt: toIsoRequired(row.created_at) };
+  return { ...row, createdAt: toIsoRequired(row.createdAt) };
 }
 
 export async function updateWorkspaceName(workspaceId: string, name: string): Promise<WorkspaceSummary | null> {
-  const row = await queryOne<{ id: string; organization_id: string; name: string; slug: string; created_at: Date }>(
-    `UPDATE workspaces SET name = $2 WHERE id = $1 RETURNING id, organization_id, name, slug, created_at`,
-    [workspaceId, name],
+  const rows = await withDb((db) =>
+    db
+      .update(workspaces)
+      .set({ name })
+      .where(eq(workspaces.id, workspaceId))
+      .returning({ id: workspaces.id, organizationId: workspaces.organizationId, name: workspaces.name, slug: workspaces.slug, createdAt: workspaces.createdAt }),
   );
-  return row
-    ? { id: row.id, organizationId: row.organization_id, name: row.name, slug: row.slug, createdAt: toIsoRequired(row.created_at) }
-    : null;
+  const row = rows[0];
+  return row ? { ...row, createdAt: toIsoRequired(row.createdAt) } : null;
 }
 
 export async function findMemberRole(organizationId: string, userId: string): Promise<MemberRole | null> {
-  const row = await queryOne<{ role: MemberRole }>(
-    "SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2",
-    [organizationId, userId],
+  const rows = await withDb((db) =>
+    db
+      .select({ role: organizationMembers.role })
+      .from(organizationMembers)
+      .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
+      .where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, userId), eq(organizations.status, "active")))
+      .limit(1),
   );
-  return row?.role ?? null;
+  return rows[0]?.role ?? null;
 }
 
-/**
- * The slug for a workspace id.
- *
- * Needed by flows that are handed a workspace id by something other than a URL
- * — the MCP OAuth callback arrives from an authorization server and learns its
- * workspace from the state row, then has to send the browser to a path.
- */
 export async function findWorkspaceSlugById(workspaceId: string): Promise<string | null> {
-  const row = await queryOne<{ slug: string }>("SELECT slug FROM workspaces WHERE id = $1", [workspaceId]);
-  return row?.slug ?? null;
+  const rows = await withDb((db) => db.select({ slug: workspaces.slug }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1));
+  return rows[0]?.slug ?? null;
+}
+
+export async function findOrganizationDefaultWorkspace(organizationId: string, client?: DatabaseClient): Promise<{ id: string; slug: string } | null> {
+  const rows = await withDb(
+    (db) => db.select({ id: workspaces.id, slug: workspaces.slug }).from(workspaces).where(eq(workspaces.organizationId, organizationId)).orderBy(asc(workspaces.createdAt)).limit(1),
+    client,
+  );
+  return rows[0] ?? null;
 }

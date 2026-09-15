@@ -1,5 +1,5 @@
+import { axisLabelAnchor, axisLabelIndices } from "@/components/charts/axis";
 import { areaPath, axisTicks, chartPoints, polylinePoints, type ChartBox } from "@/features/analytics/chart-geometry";
-import { axisLabelEvery } from "@/features/analytics/series";
 import { cn } from "@/lib/cn";
 import { formatCompactNumber, formatNumber } from "@/lib/format/number";
 
@@ -26,15 +26,17 @@ interface AnalyticsAreaChartProps {
   previousLabel?: string;
   /** Shared axis top so both series are drawn to one scale. */
   max?: number;
+  /** Height of the plot area in CSS pixels. Axis labels sit outside it. */
   height?: number;
   formatValue?: (value: number) => string;
   className?: string;
 }
 
-const WIDTH = 640;
-const PAD_LEFT = 40;
-const PAD_RIGHT = 8;
-const PAD_BOTTOM = 24;
+/**
+ * Internal resolution for the path data. Only the horizontal axis is stretched
+ * to fit the container, so this is not a pixel width.
+ */
+const PLOT_WIDTH = 640;
 /** Inset inside the plot box so a 2px stroke at the axis top is not clipped. */
 const INSET = 6;
 
@@ -42,8 +44,16 @@ const INSET = 6;
  * Hand-built line + area chart, monochrome, rendered on the server.
  *
  * All of the geometry comes from `chart-geometry`, so what is drawn is unit
- * tested rather than eyeballed. The SVG is `role="img"` and describes itself
+ * tested rather than eyeballed. The plot is `role="img"` and describes itself
  * through the visually hidden table underneath: an SVG alone is not readable.
+ *
+ * Only the path data lives in the SVG. Axis labels are HTML beside and beneath
+ * it, because a viewBox scales its contents: stretched across a full-width card
+ * the old 11px labels rendered at more than 20px and a 220px plot came out
+ * twice as tall. `preserveAspectRatio="none"` pins the vertical scale at 1:1 -
+ * one viewBox unit is one pixel and `height` means what it says - while the
+ * horizontal axis stretches to the container. The stroke is marked
+ * non-scaling so the line stays an even 2px under that uneven scale.
  */
 export function AnalyticsAreaChart({
   id,
@@ -61,88 +71,114 @@ export function AnalyticsAreaChart({
   const previousValues = points.map((point) => point.previous ?? 0);
   const top = Math.max(max ?? 0, ...currentValues, ...(hasPrevious ? previousValues : []), 0);
 
-  const box: ChartBox = { width: WIDTH - PAD_LEFT - PAD_RIGHT, height: height - PAD_BOTTOM, padding: INSET };
+  const box: ChartBox = { width: PLOT_WIDTH, height, padding: INSET };
   const ticks = axisTicks(top, 3);
   const tickPoints = chartPoints(ticks, box, top);
   const plotted = chartPoints(currentValues, box, top);
   // One bucket draws no line, so it is marked instead.
   const single = plotted.length === 1 ? plotted[0] : undefined;
-  const labelEvery = axisLabelEvery(points.length);
+  const labelled = new Set(axisLabelIndices(points.length));
+  const percent = (x: number) => `${(x / PLOT_WIDTH) * 100}%`;
 
   return (
     <figure className={cn("w-full", className)}>
-      <svg
-        viewBox={`0 0 ${WIDTH} ${height}`}
-        className="h-auto w-full"
-        role="img"
-        aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-table`}
-      >
-        <title id={`${id}-title`}>{title}</title>
-        {ticks.map((tick, index) => {
-          const y = tickPoints[index]?.y ?? 0;
-          return (
-            <g key={tick}>
+      <span id={`${id}-title`} className="sr-only">
+        {title}
+      </span>
+
+      <div className="flex gap-2">
+        <div aria-hidden className="relative w-9 shrink-0" style={{ height }}>
+          {ticks.map((tick, index) => (
+            <span
+              key={tick}
+              className="absolute right-0 -translate-y-1/2 text-caption tabular-nums text-foreground-muted"
+              style={{ top: tickPoints[index]?.y ?? 0 }}
+            >
+              {formatCompactNumber(tick)}
+            </span>
+          ))}
+        </div>
+
+        <div className="relative min-w-0 flex-1">
+          <svg
+            viewBox={`0 0 ${PLOT_WIDTH} ${height}`}
+            preserveAspectRatio="none"
+            style={{ height }}
+            className="block w-full"
+            role="img"
+            aria-labelledby={`${id}-title`}
+            aria-describedby={`${id}-table`}
+          >
+            {ticks.map((tick, index) => (
               <line
-                x1={PAD_LEFT}
-                x2={WIDTH - PAD_RIGHT}
-                y1={y}
-                y2={y}
+                key={tick}
+                x1={0}
+                x2={PLOT_WIDTH}
+                y1={tickPoints[index]?.y ?? 0}
+                y2={tickPoints[index]?.y ?? 0}
                 stroke="var(--color-border)"
                 strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
                 shapeRendering="crispEdges"
               />
-              <text
-                x={PAD_LEFT - 8}
-                y={y}
-                textAnchor="end"
-                dominantBaseline="middle"
-                className="fill-foreground-muted text-[11px] tabular-nums"
-              >
-                {formatCompactNumber(tick)}
-              </text>
-            </g>
-          );
-        })}
-        <g transform={`translate(${PAD_LEFT} 0)`}>
-          {hasPrevious ? (
+            ))}
+            {hasPrevious ? (
+              <polyline
+                points={polylinePoints(previousValues, box, top)}
+                fill="none"
+                stroke="var(--color-foreground-subtle)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            ) : null}
+            <path d={areaPath(currentValues, box, top)} fill="var(--color-foreground)" opacity={0.08} />
             <polyline
-              points={polylinePoints(previousValues, box, top)}
+              points={polylinePoints(currentValues, box, top)}
               fill="none"
-              stroke="var(--color-foreground-subtle)"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
+              stroke="var(--color-foreground)"
+              strokeWidth={2}
               strokeLinejoin="round"
               strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
             />
-          ) : null}
-          <path d={areaPath(currentValues, box, top)} fill="var(--color-foreground)" opacity={0.08} />
-          <polyline
-            points={polylinePoints(currentValues, box, top)}
-            fill="none"
-            stroke="var(--color-foreground)"
-            strokeWidth={2}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          {single ? <circle cx={single.x} cy={single.y} r={3.5} fill="var(--color-foreground)" /> : null}
-        </g>
-        {points.map((point, index) => {
-          const last = index === points.length - 1;
-          if (index % labelEvery !== 0 && !last) return null;
-          return (
-            <text
-              key={point.key}
-              x={PAD_LEFT + (plotted[index]?.x ?? 0)}
-              y={height - 6}
-              textAnchor={index === 0 ? "start" : last ? "end" : "middle"}
-              className="fill-foreground-muted text-[11px]"
+          </svg>
+
+          {/* The marker gets its own un-stretched SVG: a circle inside the plot
+              would be drawn as an ellipse by the horizontal scale. */}
+          {single ? (
+            <svg
+              aria-hidden
+              width={8}
+              height={8}
+              viewBox="0 0 8 8"
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: percent(single.x), top: single.y }}
             >
-              {point.label}
-            </text>
-          );
-        })}
-      </svg>
+              <circle cx={4} cy={4} r={3.5} fill="var(--color-foreground)" />
+            </svg>
+          ) : null}
+
+          <div aria-hidden className="relative mt-2 h-4">
+            {points.map((point, index) =>
+              labelled.has(index) ? (
+                <span
+                  key={point.key}
+                  className={cn(
+                    "absolute whitespace-nowrap text-caption text-foreground-muted",
+                    axisLabelAnchor(index, points.length),
+                  )}
+                  style={{ left: percent(plotted[index]?.x ?? 0) }}
+                >
+                  {point.label}
+                </span>
+              ) : null,
+            )}
+          </div>
+        </div>
+      </div>
 
       <figcaption className="mt-2 flex flex-wrap items-center gap-4 text-xs text-foreground-muted">
         <span className="inline-flex items-center gap-1.5">

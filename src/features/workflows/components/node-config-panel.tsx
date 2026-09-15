@@ -14,6 +14,9 @@ import { AppSelect } from "@/components/ui/app-select";
 import { AppSwitch } from "@/components/ui/app-switch";
 import { AppTextarea } from "@/components/ui/app-textarea";
 import { AppCaption, AppText } from "@/components/ui/app-typography";
+import { AppSkeleton } from "@/components/ui/app-skeleton";
+import { useAgentsQuery } from "@/features/agents/queries";
+import { useCredentialsQuery } from "@/features/integrations/queries";
 import type { WorkflowNode } from "@/features/workflows/domain/definition";
 import { NODE_CATEGORY_META, NODE_TYPES, type NodeConfigFieldDescriptor } from "@/features/workflows/domain/node-types";
 import { cn } from "@/lib/cn";
@@ -102,6 +105,92 @@ function TextBackedControl({
   );
 }
 
+/**
+ * The `agent` control: a select over this workspace's agents.
+ *
+ * A registry descriptor is static and the list of agents is not, so this is
+ * the one control that fetches its options. The value stored is the agent's
+ * id, which the executor treats as a request and re-resolves through the run's
+ * own workspace - a definition cannot name an agent it does not own.
+ */
+function AgentSelectControl({
+  aria,
+  value,
+  onBlur,
+  onChange,
+}: {
+  aria: FieldControlProps;
+  value: string;
+  onBlur: () => void;
+  onChange: (value: string) => void;
+}) {
+  const agents = useAgentsQuery({ pageSize: 100 });
+  if (agents.isPending) return <AppSkeleton className="h-9 w-full" />;
+  const items = agents.data?.items ?? [];
+  // A saved id whose agent has since been archived or deleted must stay
+  // visible, otherwise the select would silently show the first option while
+  // the definition still holds the old id.
+  const orphaned = value && !items.some((agent) => agent.id === value);
+  return (
+    <AppSelect
+      {...aria}
+      placeholder={items.length === 0 ? "No agents in this workspace yet" : "Choose an agent…"}
+      options={[
+        ...items.map((agent) => ({
+          value: agent.id,
+          label: agent.status === "active" ? agent.name : `${agent.name} (${agent.status})`,
+        })),
+        ...(orphaned ? [{ value, label: "Agent no longer available" }] : []),
+      ]}
+      value={value}
+      onBlur={onBlur}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+/**
+ * Picks a stored credential for an HTTP step.
+ *
+ * What it puts in the definition is an id. The value behind it is never fetched
+ * here - this list carries names and the header each credential sets, which is
+ * everything the builder needs to show and nothing worth protecting.
+ */
+function CredentialSelectControl({
+  aria,
+  value,
+  onBlur,
+  onChange,
+}: {
+  aria: FieldControlProps;
+  value: string;
+  onBlur: () => void;
+  onChange: (value: string) => void;
+}) {
+  const credentials = useCredentialsQuery({ pageSize: 100 });
+  if (credentials.isPending) return <AppSkeleton className="h-9 w-full" />;
+  const items = credentials.data?.items ?? [];
+  // A saved id whose credential has since been deleted must stay visible, or
+  // the select would show "None" while the definition still holds the old id.
+  const orphaned = value && !items.some((credential) => credential.id === value);
+  return (
+    <AppSelect
+      {...aria}
+      options={[
+        { value: "", label: items.length === 0 ? "No credentials in this workspace yet" : "None" },
+        ...items.map((credential) => ({
+          value: credential.id,
+          label: `${credential.name} (sets ${credential.headerPreview})`,
+        })),
+        ...(orphaned ? [{ value, label: "Credential no longer available" }] : []),
+      ]}
+      value={value}
+      onBlur={onBlur}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
 function ConfigControl({
   descriptor,
   control,
@@ -131,6 +220,24 @@ function ConfigControl({
           <AppFormField label={descriptor.label} description={descriptor.description} error={error}>
             {(aria) => {
               switch (descriptor.control) {
+                case "agent":
+                  return (
+                    <AgentSelectControl
+                      aria={aria}
+                      value={asText(field.value)}
+                      onBlur={field.onBlur}
+                      onChange={(value) => field.onChange(value)}
+                    />
+                  );
+                case "credential":
+                  return (
+                    <CredentialSelectControl
+                      aria={aria}
+                      value={asText(field.value)}
+                      onBlur={field.onBlur}
+                      onChange={(value) => field.onChange(value)}
+                    />
+                  );
                 case "number":
                   return (
                     <AppInput
