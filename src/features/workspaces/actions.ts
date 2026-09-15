@@ -9,7 +9,7 @@ import { createWorkspaceSchema, type CreateWorkspaceInput } from "@/features/wor
 import { findMemberRole, insertWorkspace } from "@/features/workspaces/server/workspace-repository";
 import { isApiError } from "@/lib/api/api-error";
 import { requireAuthOrRedirect } from "@/server/auth/dal";
-import { DatabaseUnavailableError, getPool } from "@/server/db/client";
+import { DatabaseUnavailableError, withConnection } from "@/server/db/client";
 import { actionFailure, type ActionResult } from "@/types/action-result";
 
 export async function createWorkspaceAction(input: CreateWorkspaceInput): Promise<ActionResult> {
@@ -25,7 +25,9 @@ export async function createWorkspaceAction(input: CreateWorkspaceInput): Promis
     if (!role || !hasMinimumRole(role, "admin")) {
       return actionFailure("You need to be an organization admin to create workspaces");
     }
-    const workspace = await insertWorkspace({ organizationId: parsed.data.organizationId, name: parsed.data.name }, getPool());
+    const workspace = await withConnection((client) =>
+      insertWorkspace({ organizationId: parsed.data.organizationId, name: parsed.data.name }, client),
+    );
     slug = workspace.slug;
   } catch (error) {
     if (error instanceof DatabaseUnavailableError) return actionFailure("The database is unavailable.");

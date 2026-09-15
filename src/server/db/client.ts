@@ -1,7 +1,7 @@
 import "server-only";
 
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { Client, Pool, type PoolClient, type QueryResultRow } from "pg";
 
 import { getServerEnv } from "@/config/env";
 import { ApiError } from "@/lib/api/api-error";
@@ -11,21 +11,66 @@ import * as schema from "@/server/db/schema";
 /**
  * PostgreSQL access boundary.
  *
- * - One pool per process (cached on globalThis so dev HMR does not leak pools).
  * - Every tenant-scoped query goes through `withWorkspace`, which runs inside a
  *   transaction with `app.workspace_id` set so Row Level Security policies in
  *   the database enforce tenant isolation as a second layer behind the
  *   explicit `workspace_id` filters in repository SQL.
+ *
+ * ## Two runtimes, one contract
+ *
+ * This module runs both on Node (`next dev`, `next build`, tests) and on
+ * Cloudflare Workers (`vinext build`, see `docs/deployment.md`). Connections
+ * are acquired differently in each, and `withConnection` is the only place
+ * that knows the difference:
+ *
+ * - **Node** keeps one long-lived `pg.Pool` per process, cached on
+ *   `globalThis` so dev HMR does not leak pools.
+ * - **Workers** creates one `pg.Client` per acquisition against the Hyperdrive
+ *   binding. A pool cannot be cached across requests there: a socket opened
+ *   during one request cannot be used by the next, and reusing one raises
+ *   "Cannot perform I/O on behalf of a different request". Hyperdrive owns the
+ *   real pool on Cloudflare's side, so per-request clients are cheap and are
+ *   what Cloudflare recommends for `node-postgres`.
+ *
+ * Everything above `withConnection` - `query`, `withDb`, `withTransaction`,
+ * `withWorkspace` - behaves identically on both.
  */
 
 declare global {
   var __dotPgPool: Pool | undefined;
-  var __dotDrizzle: Database | undefined;
 }
 
 // Re-exported so existing importers keep working; defined in a leaf module so
 // the error mapper does not have to import the pool. See db/errors.ts.
 export { DatabaseUnavailableError };
+
+/**
+ * The Hyperdrive connection string, or `null` on Node.
+ *
+ * `cloudflare:workers` is a workerd built-in that does not exist on Node, so it
+ * is imported through a variable specifier: a bare `import("cloudflare:workers")`
+ * would be statically resolved by the Node/Next build and fail there. On
+ * workerd the module is provided by the runtime, so nothing needs bundling.
+ *
+ * Reading `.connectionString` is a property access, not I/O, so it is safe
+ * outside a request context. Resolved once per isolate.
+ */
+let hyperdriveConnectionString: string | null | undefined;
+
+async function getHyperdriveConnectionString(): Promise<string | null> {
+  if (hyperdriveConnectionString !== undefined) return hyperdriveConnectionString;
+  try {
+    const specifier = "cloudflare:workers";
+    const workers = (await import(/* @vite-ignore */ specifier)) as {
+      env?: { HYPERDRIVE?: { connectionString?: string } };
+    };
+    hyperdriveConnectionString = workers.env?.HYPERDRIVE?.connectionString ?? null;
+  } catch {
+    // Not running on workerd. Fall back to DATABASE_URL.
+    hyperdriveConnectionString = null;
+  }
+  return hyperdriveConnectionString;
+}
 
 function createPool(): Pool {
   const env = getServerEnv();
@@ -44,41 +89,91 @@ function createPool(): Pool {
   return pool;
 }
 
-export function getPool(): Pool {
+function getPool(): Pool {
   if (!globalThis.__dotPgPool) {
     globalThis.__dotPgPool = createPool();
   }
   return globalThis.__dotPgPool;
 }
 
+/**
+ * Closes the Node pool, if one was opened.
+ *
+ * Test teardown only: an open pool keeps the process alive, so integration
+ * suites call this in `afterAll`. A no-op on Workers, where there is no pool
+ * to close - connections there are ended as each `withConnection` returns.
+ */
+export async function closePool(): Promise<void> {
+  const pool = globalThis.__dotPgPool;
+  if (!pool) return;
+  globalThis.__dotPgPool = undefined;
+  await pool.end();
+}
+
 export type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 
 /**
- * Typed query builder over the same pool.
+ * Runs `fn` with one connection checked out, and returns it afterwards however
+ * this runtime requires. See the runtime note at the top of this file.
  *
- * Drizzle is a typing and row-mapping layer, nothing more. It rides the `pg`
- * pool this module already owns, so connection limits, error translation and -
- * critically - the transaction that carries `app.workspace_id` are unchanged.
- * See `src/server/db/schema/index.ts` and `docs/orm-evaluation.md`.
+ * The client handed to `fn` is typed as `PoolClient` on both runtimes. On
+ * Workers the underlying value is a `pg.Client` given a no-op `release()`:
+ * callers only ever pass the client onward to `query()` or `withDb()` as an
+ * opaque token and never call a method on it themselves, so the shape they
+ * actually depend on is `query()`. The cast keeps that single difference here
+ * instead of spreading a union type through every repository signature.
+ */
+export async function withConnection<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const connectionString = await getHyperdriveConnectionString();
+
+  if (connectionString !== null) {
+    const client = new Client({ connectionString });
+    try {
+      await client.connect();
+    } catch (error) {
+      throw translateDbError(error);
+    }
+    const asPoolClient = Object.assign(client, { release: () => {} }) as unknown as PoolClient;
+    try {
+      return await fn(asPoolClient);
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  }
+
+  let client: PoolClient;
+  try {
+    client = await getPool().connect();
+  } catch (error) {
+    throw translateDbError(error);
+  }
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Typed query builder over the same connection.
+ *
+ * Drizzle is a typing and row-mapping layer, nothing more. It rides the
+ * connection this module hands out, so connection limits, error translation
+ * and - critically - the transaction that carries `app.workspace_id` are
+ * unchanged. See `src/server/db/schema/index.ts` and `docs/orm-evaluation.md`.
  */
 export type Database = NodePgDatabase<typeof schema>;
 /** A pool or a checked-out client that Drizzle can bind to. */
 export type DatabaseClient = Pool | PoolClient;
-
-export function getDb(): Database {
-  if (!globalThis.__dotDrizzle) {
-    globalThis.__dotDrizzle = drizzle(getPool(), { schema });
-  }
-  return globalThis.__dotDrizzle;
-}
 
 /**
  * Binds Drizzle to one transaction's connection.
  *
  * This is what keeps Row Level Security working: `withWorkspace()` sets
  * `app.workspace_id` on a specific connection, and only statements sent on
- * that same connection see it. Reaching for `getDb()` inside a workspace
- * transaction would silently escape both the transaction and the setting.
+ * that same connection see it. Reaching for a fresh connection inside a
+ * workspace transaction would silently escape both the transaction and the
+ * setting.
  */
 export function dbFor(client: DatabaseClient): Database {
   return drizzle(client, { schema });
@@ -90,11 +185,20 @@ export function dbFor(client: DatabaseClient): Database {
  * `DatabaseUnavailableError`. Pass the transaction client when inside one.
  */
 export async function withDb<T>(fn: (db: Database) => Promise<T>, client?: DatabaseClient): Promise<T> {
-  try {
-    return await fn(client ? dbFor(client) : getDb());
-  } catch (error) {
-    throw translateDbError(error);
+  if (client) {
+    try {
+      return await fn(dbFor(client));
+    } catch (error) {
+      throw translateDbError(error);
+    }
   }
+  return withConnection(async (connection) => {
+    try {
+      return await fn(dbFor(connection));
+    } catch (error) {
+      throw translateDbError(error);
+    }
+  });
 }
 
 function isConnectionError(error: unknown): boolean {
@@ -149,12 +253,22 @@ function sqlStateOf(error: unknown): string | undefined {
 }
 
 export async function query<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: Queryable): Promise<T[]> {
-  try {
-    const result = await (client ?? getPool()).query<T>(text, params);
-    return result.rows;
-  } catch (error) {
-    throw translateDbError(error);
+  if (client) {
+    try {
+      const result = await client.query<T>(text, params);
+      return result.rows;
+    } catch (error) {
+      throw translateDbError(error);
+    }
   }
+  return withConnection(async (connection) => {
+    try {
+      const result = await connection.query<T>(text, params);
+      return result.rows;
+    } catch (error) {
+      throw translateDbError(error);
+    }
+  });
 }
 
 export async function queryOne<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: Queryable): Promise<T | null> {
@@ -163,28 +277,27 @@ export async function queryOne<T extends QueryResultRow>(text: string, params: u
 }
 
 export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  let client: PoolClient;
-  try {
-    client = await getPool().connect();
-  } catch (error) {
-    throw translateDbError(error);
-  }
-  try {
-    await client.query("BEGIN");
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw translateDbError(error);
-  } finally {
-    client.release();
-  }
+  return withConnection(async (client) => {
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw translateDbError(error);
+    }
+  });
 }
 
 /**
  * Runs `fn` in a transaction scoped to one workspace. The workspace id is
  * exposed to PostgreSQL as `app.workspace_id` for RLS policies.
+ *
+ * The `set_config` is transaction-local (third argument `true`), which is what
+ * makes this correct under Hyperdrive's transaction-mode pooling on Workers:
+ * the setting is discarded at COMMIT, so a connection returned to Hyperdrive's
+ * pool can never carry one workspace's id into another workspace's queries.
  */
 export async function withWorkspace<T>(workspaceId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   return withTransaction(async (client) => {
