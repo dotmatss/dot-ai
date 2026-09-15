@@ -1,16 +1,4 @@
-import {
-  BarChart3,
-  Bot,
-  BookOpen,
-  Code2,
-  Cpu,
-  Globe,
-  MessagesSquare,
-  Plug,
-  Users,
-  Workflow,
-  type LucideIcon,
-} from "lucide-react";
+import { Bot, Cpu, Workflow, type LucideIcon } from "lucide-react";
 
 /**
  * Landing-page copy describes capabilities that exist in the product. Anything
@@ -24,8 +12,7 @@ export interface Capability {
   title: string;
   description: string;
   icon: LucideIcon;
-  /** Column span on the large bento grid (6 columns). */
-  span: 2 | 3 | 4 | 6;
+  /** Occupies the full height of the grid rather than a single row. */
   tall?: boolean;
   docsHref?: string;
 }
@@ -38,7 +25,6 @@ export const CAPABILITIES: Capability[] = [
     description:
       "Write the instructions, attach a collection, try it in the playground, then publish. Replies stream token by token and cite the sources they used.",
     icon: Bot,
-    span: 3,
     tall: true,
     docsHref: "/docs/chatbots",
   },
@@ -49,7 +35,6 @@ export const CAPABILITIES: Capability[] = [
     description:
       "Give an agent a tool set, a memory window and a structured output shape. Every tool request is shown with its decision, and nothing runs without approval.",
     icon: Cpu,
-    span: 3,
     docsHref: "/docs/agents",
   },
   {
@@ -59,78 +44,7 @@ export const CAPABILITIES: Capability[] = [
     description:
       "Build a workflow from typed nodes, validate it before it runs, and read every run as a step-by-step timeline with its inputs, outputs and failures.",
     icon: Workflow,
-    span: 3,
     docsHref: "/docs/workflows",
-  },
-  {
-    key: "knowledge",
-    eyebrow: "Knowledge",
-    title: "RAG that shows its work",
-    description:
-      "Add text, a URL or a file. Watch it move through ingestion, chunking, embedding and indexing, then test retrieval before a chatbot ever uses it.",
-    icon: BookOpen,
-    span: 2,
-    docsHref: "/docs/knowledge",
-  },
-  {
-    key: "api",
-    eyebrow: "API",
-    title: "Call it from your own application",
-    description:
-      "A workspace API key and one endpoint. The same streaming contract the widget uses, so your app, your backend and your mobile client all behave alike.",
-    icon: Code2,
-    span: 4,
-    docsHref: "/docs/api/chat",
-  },
-  {
-    key: "embed",
-    eyebrow: "Embed",
-    title: "Two lines on your website",
-    description:
-      "Paste a script tag, allow your domains, and the widget appears in your brand colour. No credentials ever reach the page.",
-    icon: Globe,
-    span: 2,
-    docsHref: "/docs/embed",
-  },
-  {
-    key: "conversations",
-    eyebrow: "Conversations",
-    title: "One inbox for every channel",
-    description:
-      "Widget, API, playground and agent runs land in the same place, with AI summaries and a reply box when a person should step in.",
-    icon: MessagesSquare,
-    span: 2,
-    docsHref: "/docs/conversations",
-  },
-  {
-    key: "crm",
-    eyebrow: "CRM",
-    title: "The people behind the conversations",
-    description:
-      "Contacts, stages, tags, notes and a merged activity timeline, linked to the conversations they came from.",
-    icon: Users,
-    span: 2,
-    docsHref: "/docs/crm",
-  },
-  {
-    key: "analytics",
-    eyebrow: "Analytics",
-    title: "Know what it costs and what it returns",
-    description:
-      "Conversations, messages, resolution rate and token spend over time, compared against the period before.",
-    icon: BarChart3,
-    span: 2,
-    docsHref: "/docs/analytics",
-  },
-  {
-    key: "integrations",
-    eyebrow: "Integrations",
-    title: "Connect the rest of your stack",
-    description:
-      "Outgoing webhooks, Slack and SMTP today, with credentials encrypted at rest and never returned to the browser.",
-    icon: Plug,
-    span: 6,
-    docsHref: "/docs/integrations",
   },
 ];
 
@@ -165,5 +79,77 @@ export const JOURNEY: JourneyStep[] = [
     step: "05",
     title: "Monitor",
     description: "Read conversations, follow up in the CRM, and watch usage and cost in analytics.",
+  },
+];
+
+export interface FaqItem {
+  key: string;
+  question: string;
+  answer: string;
+  /** Optional pointer to the page that answers the question in full. */
+  link?: { href: string; label: string };
+}
+
+/**
+ * Questions a visitor asks before signing up, answered against what the
+ * product does today. Where the honest answer is "not yet", it says so and
+ * links to the page that keeps the detail current, rather than restating it
+ * here where it would drift.
+ */
+export const FAQS: FaqItem[] = [
+  {
+    key: "what",
+    question: "What can I actually build with it?",
+    answer:
+      "Three things, in one workspace: a chatbot that answers from your content, an agent that can use tools to get something done, and a workflow that runs a sequence of steps off a trigger. They compose, so an agent can call a workflow, and whatever happens lands in the same inbox.",
+    link: { href: "/docs/concepts", label: "How the pieces fit together" },
+  },
+  {
+    key: "code",
+    question: "Do I need to write code?",
+    answer:
+      "Not for the common case. Create a chatbot, attach a collection, then paste a two-line script tag on your site. The API is there for when you want the assistant inside your own product instead of beside it, and it is the same assistant either way.",
+    link: { href: "/docs/embed", label: "Embedding guide" },
+  },
+  {
+    key: "grounding",
+    question: "How does it know anything about my business?",
+    answer:
+      "You add content to a knowledge collection as text, a URL or a file. You can watch it move through ingestion, chunking, embedding and indexing, and test retrieval before a chatbot ever uses it. Answers cite the sources they came from, so you can check them instead of trusting them.",
+    link: { href: "/docs/knowledge", label: "Knowledge and retrieval" },
+  },
+  {
+    key: "models",
+    question: "Which models can I use?",
+    answer:
+      "The ones the platform catalogue offers your workspace, which covers OpenAI, Anthropic and Google directly, plus OpenRouter, Azure OpenAI and custom gateways. You choose the model per chatbot and per agent, and changing it does not mean rebuilding anything around it.",
+  },
+  {
+    key: "handoff",
+    question: "What happens when it cannot answer?",
+    answer:
+      "The conversation reaches the inbox like every other one, with an AI summary of what was asked, and a person can read the thread and reply in the same place. Widget, API, playground and agent runs all arrive there, so there is nowhere for a question to go missing.",
+    link: { href: "/docs/conversations", label: "Conversations and handover" },
+  },
+  {
+    key: "agents",
+    question: "Can an agent take actions, or only talk?",
+    answer:
+      "It can take actions. An agent is given a tool set, a memory window and a structured output shape, and every tool request is shown alongside the decision behind it. Nothing runs without approval, so you see what it intends to do before it does it.",
+    link: { href: "/docs/agents", label: "Agents and tools" },
+  },
+  {
+    key: "isolation",
+    question: "Is my data separated from other customers?",
+    answer:
+      "Yes, and the separation is enforced in the database rather than trusted to application code. Every tenant query runs inside a transaction pinned to your workspace, with PostgreSQL row-level security policies on top of it. Integration credentials are encrypted at rest and never returned to the browser.",
+    link: { href: "/privacy", label: "What we store, and why" },
+  },
+  {
+    key: "cost",
+    question: "What does it cost?",
+    answer:
+      "Nothing today. Billing is not implemented, no payment details are collected, and usage is measured but never invoiced. The pricing page shows the shape we are working towards and marks every value that is still undecided rather than guessing at it.",
+    link: { href: "/pricing", label: "See the plans" },
   },
 ];

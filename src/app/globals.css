@@ -139,6 +139,11 @@
   --spacing-sidebar: 16rem;
   --spacing-sidebar-collapsed: 4.25rem;
   --spacing-topbar: 3.5rem;
+  /* Cell size of the decorative dot grid - see `bg-grid` below. One token so
+     the pattern stays on the same rhythm wherever it is used. Tighter than a
+     ruled grid would be: a dot carries far less ink than a line, so the cell
+     has to close up before the field reads as a texture rather than as specks. */
+  --spacing-grid: 1.5rem;
 
   /* Motion */
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -440,6 +445,46 @@
   background-color: var(--color-surface-muted);
   border-color: var(--color-border);
   color: var(--color-foreground-subtle);
+}
+
+/*
+ * Decorative dot grid backdrop
+ * -------------------------------------------------------------------------
+ * Texture for the large marketing surfaces, which are otherwise flat expanses
+ * of `bg-surface`. Dots rather than ruled lines because the product is called
+ * Dot: the backdrop is the mark, repeated.
+ *
+ * Drawn with one radial gradient rather than an SVG or an image so it costs no
+ * request, scales to any size, and - because the dot is `--color-border-strong`
+ * - follows the theme instead of needing a second asset for dark. The dot takes
+ * the stronger border token, not `--color-border`: it puts a fraction of the
+ * ink on screen that a line does, so at the same value it would disappear.
+ *
+ * Apply it to a `pointer-events-none aria-hidden` layer behind the content,
+ * never to the content's own element: the pattern is decoration, and a
+ * background on the container would sit under text at full strength.
+ */
+@utility bg-grid {
+  background-image: radial-gradient(circle at center, var(--color-border-strong) 1.25px, transparent 1.25px);
+  background-size: var(--spacing-grid) var(--spacing-grid);
+}
+
+/*
+ * Fades `bg-grid` out so it reads as depth rather than as dotted paper. The
+ * falloff is top-weighted rather than centred: the pattern is at full strength
+ * where the section begins and has dissolved before the bottom border, so the
+ * field never stops in a straight row of dots against the next section. The
+ * second gradient does the same at the left and right edges, and `intersect`
+ * applies both.
+ *
+ * Separate from `bg-grid` because the pattern and the shape of its falloff are
+ * independent decisions.
+ */
+@utility bg-grid-fade {
+  mask-image:
+    linear-gradient(to bottom, #000 0%, #000 30%, transparent 88%),
+    linear-gradient(to right, transparent 0%, #000 14%, #000 86%, transparent 100%);
+  mask-composite: intersect;
 }
 
 @utility scrollbar-thin {

@@ -9,10 +9,20 @@ import { ChatPreview } from "@/features/marketing/components/bento-visuals";
  */
 export function HeroSection() {
   return (
-    <section className="border-b border-border bg-surface">
+    <section className="relative isolate overflow-hidden border-b border-border bg-surface">
+      {/*
+       * Decorative backdrop: a field of dots - the product's own mark, repeated -
+       * at full strength where the section begins and dissolving before the
+       * bottom border. Purely presentational, so it is a sibling layer rather
+       * than a background on the container - `isolate` keeps its negative
+       * z-index inside this section instead of letting it fall behind the page
+       * background.
+       */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 bg-grid bg-grid-fade" />
+
       <div className="mx-auto grid w-full max-w-6xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:items-center lg:gap-16 lg:px-8 lg:py-28">
         <div>
-          <p className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-caption font-medium uppercase tracking-caption text-foreground-muted">
+          <p className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-caption font-medium uppercase tracking-caption text-foreground-muted shadow-xs">
             AI chatbots, agents and workflows
           </p>
 

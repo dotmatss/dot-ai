@@ -5,23 +5,12 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
-/**
- * Column span on the 6-column bento grid. The classes are written out rather
- * than composed at runtime so Tailwind can see every one of them.
- */
-const SPAN: Record<2 | 3 | 4 | 6, string> = {
-  2: "md:col-span-1 lg:col-span-2",
-  3: "md:col-span-1 lg:col-span-3",
-  4: "md:col-span-2 lg:col-span-4",
-  6: "md:col-span-2 lg:col-span-6",
-};
-
 export interface BentoCardProps {
   eyebrow: string;
   title: string;
   description: string;
   icon: LucideIcon;
-  span?: 2 | 3 | 4 | 6;
+  /** Fills both rows of the grid, so it sits alongside a stacked pair. */
   tall?: boolean;
   href?: string;
   /** Optional illustration rendered beneath the copy. */
@@ -36,7 +25,7 @@ export interface BentoCardProps {
  * so a keyboard user never lands on a tile that does nothing. Entirely server
  * rendered: the hover treatment is CSS.
  */
-export function BentoCard({ eyebrow, title, description, icon: Icon, span = 3, tall, href, children, className }: BentoCardProps) {
+export function BentoCard({ eyebrow, title, description, icon: Icon, tall, href, children, className }: BentoCardProps) {
   const content = (
     <>
       <div className="flex items-center gap-2.5">
@@ -65,8 +54,7 @@ export function BentoCard({ eyebrow, title, description, icon: Icon, span = 3, t
   const shell = cn(
     "group flex flex-col rounded-xl border border-border bg-surface p-6 shadow-xs transition-[box-shadow,border-color,transform] duration-200 ease-out-soft",
     href && "hover:-translate-y-px hover:border-border-strong hover:shadow-md focus-ring",
-    tall && "lg:row-span-2",
-    SPAN[span],
+    tall && "md:row-span-2",
     className,
   );
 

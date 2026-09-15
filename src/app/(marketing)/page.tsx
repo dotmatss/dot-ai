@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { siteConfig } from "@/config/site";
 import { BentoGrid } from "@/features/marketing/components/bento-grid";
 import { CtaSection } from "@/features/marketing/components/cta-section";
+import { FaqSection } from "@/features/marketing/components/faq-section";
 import { HeroSection } from "@/features/marketing/components/hero-section";
 import { HowItWorks } from "@/features/marketing/components/how-it-works";
 import { IntegrationPaths } from "@/features/marketing/components/integration-paths";
@@ -59,9 +60,10 @@ export default function LandingPage() {
       </div>
 
       <HowItWorks />
+      <FaqSection />
       <CtaSection />
 
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
     </>
   );
 }

@@ -60,3 +60,5 @@ Never hard-code a key or put one in a `NEXT_PUBLIC_*` variable. Full reference a
 - [docs/conversation-intelligence.md](docs/conversation-intelligence.md) — what the assistants were asked, what they could not answer, and why the clustering threshold is not yet tuned for production
 - [docs/mcp-evaluation.md](docs/mcp-evaluation.md) — Model Context Protocol: the client architecture, what phase 1 implemented, and what is deliberately left to phase 2
 - [docs/mcp-phase2-gate.md](docs/mcp-phase2-gate.md) — **proposed, not implemented.** The DNS-rebinding window that must close before any MCP tool executes, and the six decisions it needs
+- [docs/audit.md](docs/audit.md) — comprehensive architecture, security, edge readiness, and quality audit report
+

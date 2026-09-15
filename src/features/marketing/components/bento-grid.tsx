@@ -1,14 +1,7 @@
 import type { ReactNode } from "react";
 
 import { BentoCard } from "@/features/marketing/components/bento-card";
-import {
-  ApiPreview,
-  ChatPreview,
-  EmbedPreview,
-  PipelinePreview,
-  ToolPreview,
-  WorkflowPreview,
-} from "@/features/marketing/components/bento-visuals";
+import { ChatPreview, ToolPreview, WorkflowPreview } from "@/features/marketing/components/bento-visuals";
 import { CAPABILITIES } from "@/features/marketing/content";
 import { cn } from "@/lib/cn";
 
@@ -17,13 +10,14 @@ const VISUALS: Record<string, ReactNode> = {
   chatbots: <ChatPreview />,
   agents: <ToolPreview />,
   workflows: <WorkflowPreview />,
-  knowledge: <PipelinePreview />,
-  api: <ApiPreview />,
-  embed: <EmbedPreview />,
 };
 
 /**
- * The capability grid.
+ * The capability grid: one tall tile beside a stacked pair.
+ *
+ * The rows are only declared from `md` up, so the single-column phone layout
+ * keeps every tile at its natural height instead of forcing three cards into
+ * two equal rows.
  *
  * A plain grid container rather than a list: every tile is an article or a
  * link, which already carries its own semantics, and wrapping them in list
@@ -32,7 +26,7 @@ const VISUALS: Record<string, ReactNode> = {
  */
 export function BentoGrid({ className }: { className?: string }) {
   return (
-    <div className={cn("grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6", className)}>
+    <div className={cn("grid grid-cols-1 gap-4 md:grid-cols-2 md:grid-rows-2", className)}>
       {CAPABILITIES.map((capability) => (
         <BentoCard
           key={capability.key}
@@ -40,7 +34,6 @@ export function BentoGrid({ className }: { className?: string }) {
           title={capability.title}
           description={capability.description}
           icon={capability.icon}
-          span={capability.span}
           tall={capability.tall}
           href={capability.docsHref}
         >
