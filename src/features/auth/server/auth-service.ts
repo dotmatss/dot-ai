@@ -15,8 +15,25 @@ import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { withDb, withTransaction } from "@/server/db/client";
 import { organizations, userIdentities, users, organizationMembers, workspaces } from "@/server/db/schema";
 
-// A valid-looking hash used to equalize timing when the account does not exist.
-const DUMMY_HASH_PROMISE = hashPassword("dummy-password-for-timing");
+/**
+ * A valid-looking hash used to equalize timing when the account does not exist.
+ *
+ * Computed on first use rather than at module scope. `hashPassword` draws a
+ * random salt, and workerd refuses that at global scope - "Disallowed operation
+ * called within global scope. Asynchronous I/O ... and generating random values
+ * are not allowed within global scope" - which threw while this module was
+ * being imported and so failed every auth action on Workers, sign-up and
+ * sign-in alike, before any of them ran.
+ *
+ * Still computed once per isolate: the promise is cached on first call, so the
+ * timing equalization it exists for is unchanged.
+ */
+let dummyHashPromise: Promise<string> | null = null;
+
+function getDummyHash(): Promise<string> {
+  dummyHashPromise ??= hashPassword("dummy-password-for-timing");
+  return dummyHashPromise;
+}
 
 export interface AuthenticatedUser {
   id: string;
@@ -32,7 +49,7 @@ export interface AuthenticatedUser {
 export async function authenticateWithPassword(email: string, password: string): Promise<AuthenticatedUser | null> {
   const rows = await withDb((db) => db.select({ id: users.id, email: users.email, name: users.name, passwordHash: users.passwordHash }).from(users).where(and(eq(users.email, email), isNull(users.disabledAt))).limit(1));
   const user = rows[0];
-  const hash = user?.passwordHash ?? (await DUMMY_HASH_PROMISE);
+  const hash = user?.passwordHash ?? (await getDummyHash());
   const valid = await verifyPassword(password, hash);
   if (!user || !user.passwordHash || !valid) return null;
   return { id: user.id, email: user.email, name: user.name };
