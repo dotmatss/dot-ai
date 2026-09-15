@@ -15,8 +15,18 @@
     // Origin enforcement for the public chat API, the MCP OAuth redirect URIs
     // and invitation links are all built from this, so it has to be the real
     // deployed origin rather than the localhost default.
-    "APP_URL": "https://dot.jeffersonaalaiza.workers.dev"
+    "APP_URL": "https://dot.rajahx.com"
   },
+  // Custom domain. Cloudflare creates the DNS record and issues the
+  // certificate; rajahx.com must stay on this account for that to hold.
+  // APP_URL above has to match, since invitation links and the MCP OAuth
+  // redirect URIs are built from it.
+  "routes": [
+    {
+      "pattern": "dot.rajahx.com",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "dist/client",
     "not_found_handling": "none",
