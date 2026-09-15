@@ -239,11 +239,14 @@ async function getKeys(forceRefresh = false): Promise<CachedKeys> {
  * `atob` and `TextDecoder` rather than `Buffer`: both are platform globals on
  * Node 22 and workerd, so this module needs no runtime branch at all.
  */
-function base64UrlToBytes(value: string): Uint8Array {
+// `Uint8Array<ArrayBuffer>` rather than a bare `Uint8Array`: the default type
+// parameter is `ArrayBufferLike`, which includes `SharedArrayBuffer` and is
+// therefore not assignable to WebCrypto's `BufferSource`.
+function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
   const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
@@ -316,12 +319,7 @@ export async function verifyFirebaseIdToken(token: string): Promise<FirebaseIdTo
 
   const signature = base64UrlToBytes(signatureSegment);
   const signedData = new TextEncoder().encode(`${headerSegment}.${payloadSegment}`);
-  const signatureValid = await crypto.subtle.verify(
-    { name: "RSASSA-PKCS1-v1_5" },
-    key,
-    signature as unknown as ArrayBufferView,
-    signedData as unknown as ArrayBufferView,
-  );
+  const signatureValid = await crypto.subtle.verify({ name: "RSASSA-PKCS1-v1_5" }, key, signature, signedData);
   if (!signatureValid) throw new FirebaseTokenError("signature did not verify");
 
   // Claims are only read once the signature holds: before that they are
