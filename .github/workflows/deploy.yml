@@ -3,36 +3,40 @@ name: Deploy to Cloudflare Workers
 on:
   push:
     branches: [main]
+  # Pull requests run `verify` only. The gate is worth having before the merge,
+  # not just after it, and `deploy` is skipped below so a PR can never publish.
+  pull_request:
+    branches: [main]
   # Lets you re-run a deploy from the Actions tab without an empty commit,
   # which is what you want when a deploy failed for an infrastructure reason
   # rather than a code one.
   workflow_dispatch:
 
 concurrency:
-  # One deploy at a time. Not cancel-in-progress: cancelling half way through
-  # `wrangler deploy` would leave the upload in an unknown state, and the run
-  # that cancelled it is not necessarily the newer code.
-  group: cloudflare-deploy
-  cancel-in-progress: false
+  # Keyed on the ref so a pull request cannot queue behind (or hold up) a deploy
+  # of main. Superseded PR runs are cancelled; a deploy of main never is -
+  # cancelling half way through `wrangler deploy` would leave the upload in an
+  # unknown state, and the run that cancelled it is not necessarily newer code.
+  group: cloudflare-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Build-time only, and deliberately not a real secret.
+  #
+  # `next build` runs with NODE_ENV=production and prerenders /sitemap.xml,
+  # which calls getServerEnv() - and that refuses to start in production
+  # without a 32+ character APP_SECRET. The value is never used to sign
+  # anything here: the key that signs embed tokens at runtime is a Worker
+  # secret (`wrangler secret put APP_SECRET`) and must never be in this file
+  # or in GitHub. The app reads process.env as a whole object rather than a
+  # static process.env.APP_SECRET reference, so no bundler can inline this
+  # into the build output.
+  APP_SECRET: ci-build-placeholder-not-used-to-sign-anything-000000
 
 jobs:
-  deploy:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
-    env:
-      # Build-time only, and deliberately not a real secret.
-      #
-      # `next build` runs with NODE_ENV=production and prerenders /sitemap.xml,
-      # which calls getServerEnv() - and that refuses to start in production
-      # without a 32+ character APP_SECRET. The value is never used to sign
-      # anything here: the key that signs embed tokens at runtime is a Worker
-      # secret (`wrangler secret put APP_SECRET`) and must never be in this file
-      # or in GitHub. The app reads process.env as a whole object rather than a
-      # static process.env.APP_SECRET reference, so no bundler can inline this
-      # into the build output.
-      APP_SECRET: ci-build-placeholder-not-used-to-sign-anything-000000
-
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -57,14 +61,45 @@ jobs:
       - name: Build and type check
         # `next build` type checks as part of building, with the typedRoutes
         # types generated, which a bare `tsc --noEmit` on a fresh checkout does
-        # not have. This is the gate that catches a bad route literal or a type
-        # error before anything reaches Cloudflare.
+        # not have. Note that CI has no tsconfig.tsbuildinfo, so this is a full
+        # check - it will catch errors that an incremental local run skips.
         run: pnpm run build
 
       - name: Test
         run: pnpm test
 
       - name: Build the Workers bundle
+        # Built here too so a pull request fails on a Workers-specific build
+        # problem - a middleware matcher vinext cannot compile, say - rather
+        # than discovering it during the deploy that follows the merge.
+        run: pnpm run build:vinext
+
+  deploy:
+    needs: verify
+    # Never on a pull request, even one from a branch in this repository.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the Workers bundle
+        # Rebuilt rather than carried over from `verify` as an artifact: the
+        # bundle is a few seconds of work and passing it between jobs would add
+        # a way for what was tested and what ships to drift apart.
         run: pnpm run build:vinext
 
       - name: Deploy
@@ -81,13 +116,13 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
-            body=$(curl -fsS --max-time 30 https://dot.rajahx.com/api/health) && {
+            if body=$(curl -fsS --max-time 30 https://dot.rajahx.com/api/health); then
               echo "$body"
               case "$body" in
                 *'"database":"ok"'*) echo "Health check passed."; exit 0 ;;
                 *) echo "Reachable, but the database check did not report ok." ;;
               esac
-            }
+            fi
             echo "Attempt $attempt failed; retrying in 10s."
             sleep 10
           done
