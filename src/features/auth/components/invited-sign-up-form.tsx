@@ -9,7 +9,9 @@ import { AppFormField } from "@/components/forms/form-field";
 import { AppAlert } from "@/components/ui/app-alert";
 import { AppButton } from "@/components/ui/app-button";
 import { AppInput, AppPasswordInput } from "@/components/ui/app-input";
-import { signUpWithInvitationAction } from "@/features/auth/actions";
+import { isFirebaseAuthEnabled } from "@/config/firebase";
+import { signUpWithInvitationAction, signUpWithInvitationFirebaseAction } from "@/features/auth/actions";
+import { createFirebaseAccount, firebaseErrorMessage } from "@/features/auth/firebase-client";
 import { invitedSignUpSchema, type InvitedSignUpInput } from "@/features/auth/schemas";
 import { applyFieldErrors } from "@/lib/forms/apply-field-errors";
 
@@ -28,6 +30,7 @@ import { applyFieldErrors } from "@/lib/forms/apply-field-errors";
 export function InvitedSignUpForm({ token, email }: { token: string; email: string }) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const firebaseEnabled = isFirebaseAuthEnabled();
   const form = useForm<InvitedSignUpInput>({
     resolver: zodResolver(invitedSignUpSchema),
     defaultValues: { name: "", email, password: "", invitationToken: token },
@@ -36,6 +39,31 @@ export function InvitedSignUpForm({ token, email }: { token: string; email: stri
   const onSubmit = form.handleSubmit((values) => {
     setServerError(null);
     startTransition(async () => {
+      if (firebaseEnabled) {
+        let idToken: string;
+        try {
+          // `values.email` is the invitation's address, and the field is
+          // read-only - but this is not where that is enforced. The server
+          // re-checks the invitation against the address in the verified
+          // token, so a tampered field produces a refusal there, not an
+          // account in the wrong organization.
+          ({ idToken } = await createFirebaseAccount({ email: values.email, password: values.password, name: values.name }));
+        } catch (error) {
+          setServerError(firebaseErrorMessage(error));
+          return;
+        }
+        const result = await signUpWithInvitationFirebaseAction({
+          idToken,
+          name: values.name,
+          invitationToken: values.invitationToken,
+        });
+        if (result && !result.ok) {
+          setServerError(result.error);
+          applyFieldErrors(form.setError, result.fieldErrors);
+        }
+        return;
+      }
+
       const result = await signUpWithInvitationAction(values);
       if (result && !result.ok) {
         setServerError(result.error);

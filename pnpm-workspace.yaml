@@ -2,7 +2,16 @@
 # esbuild downloads its native binary (vitest, drizzle-kit), unrs-resolver builds
 # the native resolver behind the ESLint import plugin, and workerd extracts the
 # Cloudflare Workers runtime binary that wrangler and vinext build on.
+#
+# The two Firebase entries are denied, deliberately. `@firebase/util`'s script
+# only prints a post-install notice, and `protobufjs` generates code for the
+# gRPC transport that `firebase-admin` uses to reach Firestore - which this
+# repository never does: firebase-admin is a devDependency used by one migration
+# script, for `importUsers`, over REST. Both were verified by running that
+# script's --dry-run with the builds denied.
 allowBuilds:
+  '@firebase/util': false
   esbuild: true
+  protobufjs: false
   unrs-resolver: true
   workerd: true

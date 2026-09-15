@@ -27,6 +27,12 @@ const eslintConfig = defineConfig([
     "coverage/**",
     "playwright-report/**",
     "test-results/**",
+    // Build output of the Cloudflare Workers toolchain (`vinext build`,
+    // wrangler). Already git-ignored; linting bundled, minified output produces
+    // megabytes of warnings about code nobody wrote.
+    "dist/**",
+    ".vinext/**",
+    ".wrangler/**",
   ]),
 ]);
 

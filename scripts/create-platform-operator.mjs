@@ -86,7 +86,12 @@ try {
 
   const passwordHash = await hashPassword(password);
   const { rows: [user] } = await db.query(
-    "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id",
+    // Verified by construction: whoever ran this script has database access and
+    // chose the address, so there is nobody left for a confirmation email to
+    // convince. Explicit because `email_verified` defaults to false (0029), and
+    // an unverified operator would be bounced to /verify-email with no Firebase
+    // identity to verify against.
+    "INSERT INTO users (email, name, password_hash, email_verified) VALUES ($1, $2, $3, true) RETURNING id",
     [email, name.trim(), passwordHash],
   );
 

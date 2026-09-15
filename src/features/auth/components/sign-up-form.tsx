@@ -9,13 +9,29 @@ import { AppFormField } from "@/components/forms/form-field";
 import { AppAlert } from "@/components/ui/app-alert";
 import { AppButton } from "@/components/ui/app-button";
 import { AppInput, AppPasswordInput } from "@/components/ui/app-input";
-import { signUpAction } from "@/features/auth/actions";
+import { isFirebaseAuthEnabled } from "@/config/firebase";
+import { signUpAction, signUpWithFirebaseAction } from "@/features/auth/actions";
+import { createFirebaseAccount, firebaseErrorMessage } from "@/features/auth/firebase-client";
 import { signUpSchema, type SignUpInput } from "@/features/auth/schemas";
 import { applyFieldErrors } from "@/lib/forms/apply-field-errors";
 
+/**
+ * Registration.
+ *
+ * With Firebase configured the order is the one §4 sets out, and the order
+ * matters: the Firebase account is created FIRST, in the browser, so the
+ * password reaches Google and not this server. Firebase then sends its own
+ * verification email, and only afterwards does the application hear about any
+ * of it - as an ID token it verifies for itself before writing a row.
+ *
+ * The email and password fields are not sent to our server at all on this
+ * path. The action receives the token, the person's name and the organization
+ * name, and reads the address out of the verified token.
+ */
 export function SignUpForm() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const firebaseEnabled = isFirebaseAuthEnabled();
   const form = useForm<SignUpInput>({
     resolver: zodResolver(signUpSchema),
     defaultValues: { name: "", organizationName: "", email: "", password: "" },
@@ -24,6 +40,26 @@ export function SignUpForm() {
   const onSubmit = form.handleSubmit((values) => {
     setServerError(null);
     startTransition(async () => {
+      if (firebaseEnabled) {
+        let idToken: string;
+        try {
+          ({ idToken } = await createFirebaseAccount({ email: values.email, password: values.password, name: values.name }));
+        } catch (error) {
+          setServerError(firebaseErrorMessage(error));
+          return;
+        }
+        const result = await signUpWithFirebaseAction({
+          idToken,
+          name: values.name,
+          organizationName: values.organizationName,
+        });
+        if (result && !result.ok) {
+          setServerError(result.error);
+          applyFieldErrors(form.setError, result.fieldErrors);
+        }
+        return;
+      }
+
       const result = await signUpAction(values);
       if (result && !result.ok) {
         setServerError(result.error);
@@ -51,7 +87,7 @@ export function SignUpForm() {
       </AppFormField>
       <AppFormField
         label="Password"
-        description="At least 8 characters."
+        description={firebaseEnabled ? "At least 8 characters. We'll email you a link to confirm your address." : "At least 8 characters."}
         error={form.formState.errors.password?.message}
         required
       >

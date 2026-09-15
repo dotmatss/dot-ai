@@ -16,6 +16,22 @@
     // and invitation links are all built from this, so it has to be the real
     // deployed origin rather than the localhost default.
     "APP_URL": "https://dot.rajahx.com"
+
+    // Firebase Authentication is OFF until this is added:
+    //
+    //   "FIREBASE_PROJECT_ID": "your-firebase-project"
+    //
+    // Deliberately absent rather than present-and-empty. An empty string fails
+    // `getServerEnv()` validation and would take the whole deployment down;
+    // absent means Firebase is off and the built-in password credentials are
+    // used, which is a supported state (ADR 0001).
+    //
+    // This is only HALF the configuration. The four NEXT_PUBLIC_FIREBASE_*
+    // values are inlined into the browser bundle at BUILD time and cannot come
+    // from a Worker var - they belong in the build environment, and
+    // .github/workflows/deploy.yml already passes them through. Setting this
+    // one alone produces a server that verifies tokens for a browser that has
+    // no Firebase to get one from. See docs/firebase-auth.md.
   },
   // Custom domain. Cloudflare creates the DNS record and issues the
   // certificate; rajahx.com must stay on this account for that to hold.

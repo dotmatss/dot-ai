@@ -141,7 +141,12 @@ async function main() {
   const createdUser = !userId;
   if (!userId) {
     userId = randomUUID();
-    await insert("users", [{ id: userId, email, name: "Demo User", password_hash: await hashPassword(password) }]);
+    // email_verified: seeded accounts are verified by construction - there is
+    // no mailbox behind them, and the verification gate would otherwise make
+    // the seeded demo unusable. Defaults to false since migration 0029.
+    await insert("users", [
+      { id: userId, email, name: "Demo User", password_hash: await hashPassword(password), email_verified: true },
+    ]);
   }
 
   const existingOrg = await client.query(
@@ -161,7 +166,13 @@ async function main() {
   // ------------------------------------------------------------------ identity
   const teammateId = randomUUID();
   await insert("users", [
-    { id: teammateId, email: teammateEmail, name: "Sam Rivera", password_hash: await hashPassword(teammatePassword) },
+    {
+      id: teammateId,
+      email: teammateEmail,
+      name: "Sam Rivera",
+      password_hash: await hashPassword(teammatePassword),
+      email_verified: true,
+    },
   ]);
 
   const organizationId = randomUUID();

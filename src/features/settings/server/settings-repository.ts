@@ -495,7 +495,7 @@ const sessionSelection = {
   expiresAt: sessions.expiresAt,
 };
 
-function mapSession(row: SessionRow, currentSessionId: string): UserSessionSummary {
+function mapSession(row: SessionRow, currentSessionId: string | null): UserSessionSummary {
   const device = describeUserAgent(row.userAgent);
   return {
     id: row.id,
@@ -511,8 +511,14 @@ function mapSession(row: SessionRow, currentSessionId: string): UserSessionSumma
   };
 }
 
-/** Live sessions for one user, most recently active first. Expired rows are skipped. */
-export async function listUserSessions(userId: string, currentSessionId: string): Promise<UserSessionSummary[]> {
+/**
+ * Live sessions for one user, most recently active first. Expired rows are
+ * skipped.
+ *
+ * `currentSessionId` is null for a caller who authenticated with a Bearer ID
+ * token rather than the cookie: no row is theirs, so none is marked current.
+ */
+export async function listUserSessions(userId: string, currentSessionId: string | null): Promise<UserSessionSummary[]> {
   const rows = await withDb((db) =>
     db
       .select(sessionSelection)

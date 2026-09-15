@@ -10,8 +10,15 @@ const SESSION_COOKIE = "dot_session";
  * a sign-in form to a person who needs the sign-up half of the page, and lose
  * the context of which organization invited them. The page itself reveals
  * nothing without a valid token.
+ *
+ * `/forgot-password` is public for the same reason a sign-in form is: somebody
+ * who cannot sign in is exactly who needs it.
+ *
+ * `/verify-email` is deliberately NOT here. It requires a session - it is where
+ * a signed-in but unverified account waits - so the cookie check below is the
+ * behaviour it wants: no cookie, no waiting room, go and sign in.
  */
-const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/invite", "/embed", "/docs"];
+const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/forgot-password", "/invite", "/embed", "/docs"];
 
 /**
  * Static files, which must pass through untouched.

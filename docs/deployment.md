@@ -11,7 +11,7 @@ Workers. Read the Cloudflare section below before changing anything here.
 | --- | --- | --- |
 | `dns.resolve4` / `dns.resolve6` | `src/server/http/egress-guard.ts` | Every outbound request to a customer-supplied destination is validated by resolving the name and checking **every** returned address, in both families, against the private-address policy. Works on Workers; `dns.lookup` does not |
 | Long-lived TCP connection pool | `src/server/db/client.ts` (`pg.Pool`) | Transaction-scoped `set_config('app.workspace_id')` is how Row Level Security is applied, so a transaction must hold one connection |
-| `node:crypto` scrypt | `src/server/auth/password.ts` | Password hashing with a stored work factor |
+| `node:crypto` scrypt | `src/server/auth/password.ts` | Password hashing with a stored work factor. Only reachable while Firebase is unconfigured; see below |
 
 ## Cloudflare
 
@@ -43,6 +43,24 @@ resolves with `resolve4`/`resolve6`, validates every address across both
 families, and connects by name. The window described above is open in
 production. Do not re-introduce pinning without changing the deployment target
 first - on Workers it cannot work.
+
+### Authentication on Workers
+
+`firebase-admin` does not run here, and the application does not ask it to.
+It is a Node SDK - `node:http2`, a filesystem credential loader, a long-lived
+process - so ID tokens are verified directly against Google's published JWKS
+with WebCrypto, which is a platform global on both Node 22 and workerd
+(`src/server/auth/firebase/verify-id-token.ts`, ADR 0007). One implementation,
+both runtimes, no added runtime dependency.
+
+`firebase-admin` is still a devDependency, used by
+`scripts/migrate-users-to-firebase.mjs` on Node. Nothing under `src/` imports
+it, and `vinext build` puts none of it in the Worker bundle.
+
+The `node:crypto` scrypt row above is therefore dead weight in any deployment
+that has `FIREBASE_PROJECT_ID` set: Firebase owns passwords there, and the
+password Server Actions refuse. It matters only for local development and the
+test suite, which run without a Firebase project by design.
 
 ### The database on Workers
 

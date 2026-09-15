@@ -78,8 +78,15 @@ export interface SettingsActor {
   /** Denormalized into the activity feed so it survives account deletion. */
   actorName: string;
   role: MemberRole;
-  /** The session that made this request; the only one that can be "current". */
-  sessionId: string;
+  /**
+   * The session that made this request; the only one that can be "current".
+   *
+   * Null when the caller authenticated with a Bearer ID token rather than the
+   * session cookie. That is not a missing value to work around - such a caller
+   * has no browser session, so no row in the list is theirs, and every
+   * comparison against it correctly finds nothing.
+   */
+  sessionId: string | null;
 }
 
 /** Builds the actor from a route handler's verified workspace context. */
@@ -90,7 +97,7 @@ export function settingsActor(ctx: WorkspaceContext): SettingsActor {
     userId: ctx.user.id,
     actorName: ctx.user.name,
     role: ctx.membership.role,
-    sessionId: ctx.session.sessionId,
+    sessionId: ctx.session?.sessionId ?? null,
   };
 }
 

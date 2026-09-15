@@ -3,10 +3,9 @@
 import { LogOut, ExternalLink } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
 
 import { AppDropdownMenu, AppDropdownMenuItem, AppDropdownMenuSeparator } from "@/components/ui/app-dropdown-menu";
-import { signOutAction } from "@/features/auth/actions";
+import { useSignOut } from "@/features/auth/use-sign-out";
 
 /**
  * Account menu for the platform plane.
@@ -20,12 +19,13 @@ import { signOutAction } from "@/features/auth/actions";
  *
  * So it takes the email as a prop and offers only what exists here: leaving the
  * plane, and signing out. Both actions are the same underlying ones the
- * customer shell uses - `signOutAction` destroys the session row and clears the
- * cookie - so an operator's sign-out is not a second, weaker implementation.
+ * customer shell uses - `useSignOut` ends the Firebase session and destroys the
+ * session row - so an operator's sign-out is not a second, weaker
+ * implementation.
  */
 export function OperatorMenu({ email }: { email: string }) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const { signOut, pending } = useSignOut();
 
   return (
     <AppDropdownMenu
@@ -57,7 +57,7 @@ export function OperatorMenu({ email }: { email: string }) {
         Leave admin
       </AppDropdownMenuItem>
       <AppDropdownMenuSeparator />
-      <AppDropdownMenuItem icon={<LogOut aria-hidden />} onSelect={() => startTransition(() => signOutAction())}>
+      <AppDropdownMenuItem icon={<LogOut aria-hidden />} onSelect={signOut}>
         Sign out
       </AppDropdownMenuItem>
     </AppDropdownMenu>

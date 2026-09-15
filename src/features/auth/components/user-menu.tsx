@@ -3,17 +3,16 @@
 import { LogOut, Settings, UserRound } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
 
 import { AppAvatar } from "@/components/ui/app-avatar";
 import { AppDropdownMenu, AppDropdownMenuItem, AppDropdownMenuSeparator } from "@/components/ui/app-dropdown-menu";
-import { signOutAction } from "@/features/auth/actions";
+import { useSignOut } from "@/features/auth/use-sign-out";
 import { useWorkspace } from "@/features/workspaces/components/workspace-provider";
 
 export function UserMenu() {
   const { user, membership } = useWorkspace();
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const { signOut, pending } = useSignOut();
 
   return (
     <AppDropdownMenu
@@ -50,7 +49,7 @@ export function UserMenu() {
       <AppDropdownMenuSeparator />
       <AppDropdownMenuItem
         icon={<LogOut aria-hidden />}
-        onSelect={() => startTransition(() => signOutAction())}
+        onSelect={signOut}
       >
         Sign out
       </AppDropdownMenuItem>

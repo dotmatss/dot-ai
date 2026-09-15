@@ -7,8 +7,10 @@ const root = path.resolve(__dirname, "..", "..");
 import { NextRequest } from "next/server";
 import { ApiError } from "@/lib/api/api-error";
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), audit: vi.fn(), withDb: vi.fn() }));
+// `requireApiVerifiedAuth` is what the platform DAL calls: the verified-email
+// gate lives inside it, so these cases exercise the grant, not the gate.
 vi.mock("@/server/auth/dal", () => ({
-  requireApiAuth: mocks.auth, getAuthContext: mocks.auth, requireAuthOrRedirect: mocks.auth,
+  requireApiAuth: mocks.auth, requireApiVerifiedAuth: mocks.auth, getAuthContext: mocks.auth, requireAuthOrRedirect: mocks.auth,
 }));
 vi.mock("@/server/db/client", () => ({ withDb: mocks.withDb }));
 vi.mock("@/server/platform/platform-audit", () => ({ recordPlatformAudit: mocks.audit }));
@@ -23,7 +25,7 @@ describe("platform authorization", () => {
     expect(handler).not.toHaveBeenCalled();
   });
   it("rejects an authenticated organization owner without a platform grant and audits the denial", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "owner", email: "owner@example.test" }, session: {} });
+    mocks.auth.mockResolvedValue({ user: { id: "owner", email: "owner@example.test", emailVerified: true }, session: {} });
     mocks.withDb.mockResolvedValue([]);
     const handler = vi.fn();
     expect((await platformRoute(handler)(new NextRequest("http://localhost/api/admin/users"))).status).toBe(404);
@@ -31,14 +33,14 @@ describe("platform authorization", () => {
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.access.denied", actorId: "owner" }));
   });
   it("allows a live platform grant", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin", email: "admin@example.test" }, session: {} });
+    mocks.auth.mockResolvedValue({ user: { id: "admin", email: "admin@example.test", emailVerified: true }, session: {} });
     mocks.withDb.mockResolvedValue([{ userId: "admin", grantedAt: new Date(), note: null }]);
     const handler = vi.fn().mockResolvedValue(new Response("ok"));
     expect((await platformRoute(handler)(new NextRequest("http://localhost/api/admin/users"))).status).toBe(200);
     expect(handler).toHaveBeenCalledOnce();
   });
   it("rejects a cross-origin mutation before invoking the handler", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin", email: "admin@example.test" }, session: {} });
+    mocks.auth.mockResolvedValue({ user: { id: "admin", email: "admin@example.test", emailVerified: true }, session: {} });
     const handler = vi.fn();
     const request = new NextRequest("http://localhost/api/admin/users/target", {
       method: "PATCH", headers: { origin: "https://other.example", host: "localhost", "x-requested-with": "fetch" },
@@ -47,7 +49,7 @@ describe("platform authorization", () => {
     expect(handler).not.toHaveBeenCalled();
   });
   it("does not label a missing target as a platform access denial", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin", email: "admin@example.test" }, session: {} });
+    mocks.auth.mockResolvedValue({ user: { id: "admin", email: "admin@example.test", emailVerified: true }, session: {} });
     mocks.withDb.mockResolvedValue([{ userId: "admin", grantedAt: new Date(), note: null }]);
     const handler = vi.fn().mockRejectedValue(ApiError.notFound());
     expect((await platformRoute(handler)(new NextRequest("http://localhost/api/admin/users/missing"))).status).toBe(404);

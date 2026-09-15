@@ -3,7 +3,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 
 import { ApiError } from "@/lib/api/api-error";
-import { withDb } from "@/server/db/client";
+import { withDb, type DatabaseClient } from "@/server/db/client";
 import { organizations, users, workspaces } from "@/server/db/schema";
 
 /**
@@ -55,11 +55,24 @@ export async function assertWorkspaceActive(workspaceId: string): Promise<void> 
  *
  * The session DAL already filters disabled accounts out of `getAuthContext`,
  * so this is for paths that resolve a user id from something other than a
- * session cookie - an API key's creator, a stored actor on a queued job - where
- * that filter never ran.
+ * session cookie - an API key's creator, a stored actor on a queued job, an
+ * external identity being linked - where that filter never ran.
+ *
+ * ── Pass `client` when calling this inside a transaction ────────────────────
+ *
+ * Without it the check runs on a DIFFERENT connection, which cannot see
+ * uncommitted rows. A caller that has just inserted a user and then asks
+ * whether that user is active gets "no such account" and fails a registration
+ * that was proceeding perfectly well - and, worse, the same blindness the
+ * other way round would let it pass a row a transaction had just disabled.
+ * Joining the caller's transaction makes the answer the one the caller is
+ * acting on.
  */
-export async function assertUserActive(userId: string): Promise<void> {
-  const rows = await withDb((db) => db.select({ disabledAt: users.disabledAt }).from(users).where(eq(users.id, userId)).limit(1));
+export async function assertUserActive(userId: string, client?: DatabaseClient): Promise<void> {
+  const rows = await withDb(
+    (db) => db.select({ disabledAt: users.disabledAt }).from(users).where(eq(users.id, userId)).limit(1),
+    client,
+  );
   const row = rows[0];
 
   if (!row || row.disabledAt) throw ApiError.unauthorized("This account is not active.");

@@ -33,6 +33,28 @@ env:
   # into the build output.
   APP_SECRET: ci-build-placeholder-not-used-to-sign-anything-000000
 
+  # Firebase CLIENT configuration, inlined into the browser bundle by
+  # `next build` and `vinext build`. It has to be here rather than in
+  # wrangler.jsonc: by the time the Worker runs, the bundle is already written,
+  # so a Worker var cannot supply it. The server half is FIREBASE_PROJECT_ID,
+  # which IS a Worker var because it is read at request time.
+  #
+  # Repository variables, not secrets. A Firebase web API key is an identifier,
+  # not a credential - Google publishes it in every documented web snippet - and
+  # what protects the project is its Console configuration (authorized domains,
+  # enabled providers, quotas). The service-account private key is the thing
+  # that must never be here, and it is not: token verification uses Google's
+  # published public keys, so nothing on the request path wants one.
+  #
+  # Unset until the Firebase project exists, which is exactly right: they
+  # inline as empty, `getFirebaseClientConfig()` returns null, and the
+  # application falls back to its own password credentials (ADR 0001).
+  # See docs/firebase-auth.md.
+  NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+  NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest

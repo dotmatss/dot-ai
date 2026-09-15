@@ -120,7 +120,9 @@ try {
   }
 
   const { rows: [user] } = await db.query(
-    "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id",
+    // See create-platform-operator.mjs: created out of band, so verified by
+    // construction. `email_verified` defaults to false since migration 0029.
+    "INSERT INTO users (email, name, password_hash, email_verified) VALUES ($1, $2, $3, true) RETURNING id",
     [email, name.trim(), await hashPassword(password)],
   );
   await db.query("INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)", [

@@ -1,13 +1,22 @@
 import "server-only";
 
 import { and, asc, eq, isNull } from "drizzle-orm";
+import { headers } from "next/headers";
 import { forbidden, notFound, redirect, unauthorized } from "next/navigation";
 import { cache } from "react";
 
+import { findUserByIdentity } from "@/features/auth/server/auth-service";
+import { FIREBASE_PROVIDER } from "@/features/auth/server/firebase-auth-service";
 import type { OrganizationStatus } from "@/features/platform/types";
 import { hasMinimumRole, type MemberRole } from "@/features/workspaces/roles";
 import type { CurrentUser, WorkspaceMembership } from "@/features/workspaces/types";
 import { ApiError } from "@/lib/api/api-error";
+import {
+  firebaseIdTokenFrom,
+  FirebaseTokenError,
+  isFirebaseConfigured,
+  verifyFirebaseIdToken,
+} from "@/server/auth/firebase/verify-id-token";
 import { resolveSessionFromCookie, type ResolvedSession } from "@/server/auth/session";
 import { withDb } from "@/server/db/client";
 import { organizationMembers, organizations, users, workspaces } from "@/server/db/schema";
@@ -19,9 +28,24 @@ import { toIsoRequired } from "@/server/db/sql";
  * its identity and workspace context here, never from client-provided state.
  */
 
+/**
+ * How the caller proved who they are.
+ *
+ * `"session"` is the application's own cookie and is what every browser
+ * navigation uses. `"firebase-token"` is an `Authorization: Bearer` ID token,
+ * accepted only on the API surface for programmatic clients.
+ *
+ * Worth distinguishing because the two are not interchangeable for everything:
+ * a token-authenticated request has no session row, so it has no "current
+ * session" to mark in the sessions list and nothing to revoke on sign-out.
+ */
+export type AuthCredentialKind = "session" | "firebase-token";
+
 export interface AuthContext {
-  session: ResolvedSession;
+  /** Null when the caller authenticated with a Bearer ID token. */
+  session: ResolvedSession | null;
   user: CurrentUser;
+  credential: AuthCredentialKind;
 }
 
 /**
@@ -54,6 +78,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext | null> => {
   if (!user) return null;
   return {
     session,
+    credential: "session",
     user: {
       id: user.id,
       email: user.email,
@@ -62,6 +87,88 @@ export const getAuthContext = cache(async (): Promise<AuthContext | null> => {
       emailVerified: user.emailVerified,
     },
   };
+});
+
+/**
+ * The same account lookup, for a user id that some other credential has
+ * already proved. Shares the `disabled_at IS NULL` predicate with
+ * `getAuthContext` so a disabled account is signed out on every path, not just
+ * the cookie one.
+ */
+async function loadActiveUser(userId: string): Promise<CurrentUser | null> {
+  const rows = await withDb((db) =>
+    db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        avatarUrl: users.avatarUrl,
+        emailVerified: users.emailVerified,
+      })
+      .from(users)
+      .where(and(eq(users.id, userId), isNull(users.disabledAt)))
+      .limit(1),
+  );
+  const user = rows[0];
+  return user
+    ? { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl, emailVerified: user.emailVerified }
+    : null;
+}
+
+/**
+ * Authentication for API callers, which may present either credential.
+ *
+ * The cookie is tried first, so an ordinary browser request costs exactly what
+ * it did before: one memoized lookup, no header parsing, no token work.
+ *
+ * ── The Bearer path ─────────────────────────────────────────────────────────
+ *
+ * This is §6 and §22 as they apply to a programmatic client: extract the
+ * token, verify it with Google's published keys, read the UID from the
+ * VERIFIED claims, resolve it through `user_identities` to an application
+ * user, and attach that user to the request. Not one of those steps consults
+ * anything else the client sent - there is no `userId` parameter anywhere in
+ * this codebase that can name the caller, and a request adding one would have
+ * it ignored.
+ *
+ * Authorization is untouched by which credential was used. The context this
+ * returns feeds the same `requireApiWorkspaceAccess` and
+ * `requireApiPlatformAccess` as a cookie, which read
+ * `organization_members.role` and `platform_admins` from PostgreSQL. A valid
+ * Firebase token for a disabled account, or for someone with no membership,
+ * gets exactly as far here as a valid cookie for one: nowhere.
+ *
+ * `firebaseIdTokenFrom` requires a three-part JWT, so the opaque developer API
+ * keys that share this header fall through to `authenticateApiKey` untouched.
+ */
+const getBearerAuthContext = cache(async (): Promise<AuthContext | null> => {
+  if (!isFirebaseConfigured()) return null;
+
+  const requestHeaders = await headers();
+  const idToken = firebaseIdTokenFrom(requestHeaders.get("authorization"));
+  if (!idToken) return null;
+
+  let claims;
+  try {
+    claims = await verifyFirebaseIdToken(idToken);
+  } catch (error) {
+    if (error instanceof FirebaseTokenError) {
+      console.warn("[auth] rejected Bearer ID token:", error.reason);
+      return null;
+    }
+    // Google unreachable, or a misconfiguration. Not the caller's fault, and
+    // not something to report as "unauthenticated" - that would tell an
+    // operator their credentials are wrong during someone else's outage.
+    console.error("[auth] could not verify Bearer ID token", error);
+    throw ApiError.unavailable("Could not verify your credentials right now. Try again in a moment.");
+  }
+
+  const linked = await findUserByIdentity(FIREBASE_PROVIDER, claims.uid);
+  if (!linked) return null;
+  const user = await loadActiveUser(linked.id);
+  if (!user) return null;
+
+  return { session: null, credential: "firebase-token", user };
 });
 
 /** For pages: renders the 401 segment when unauthenticated. */
@@ -78,10 +185,33 @@ export async function requireAuthOrRedirect(next?: string): Promise<AuthContext>
   return ctx;
 }
 
-/** For route handlers: throws an ApiError instead of rendering. */
+/**
+ * For route handlers: throws an ApiError instead of rendering.
+ *
+ * Accepts the session cookie or an `Authorization: Bearer <firebase-id-token>`,
+ * in that order. Pages deliberately do not get the Bearer path: a browser
+ * navigation cannot carry the header, so offering it there would be a branch
+ * that never runs.
+ */
 export async function requireApiAuth(): Promise<AuthContext> {
-  const ctx = await getAuthContext();
+  const ctx = (await getAuthContext()) ?? (await getBearerAuthContext());
   if (!ctx) throw ApiError.unauthorized();
+  return ctx;
+}
+
+/**
+ * For route handlers behind the verified-email gate.
+ *
+ * Reads `users.email_verified`, which the server writes from a verified token
+ * and nothing else can set. The 403 names the requirement because the caller
+ * can act on it; it discloses nothing they do not already know about their own
+ * account.
+ */
+export async function requireApiVerifiedAuth(): Promise<AuthContext> {
+  const ctx = await requireApiAuth();
+  if (!ctx.user.emailVerified) {
+    throw ApiError.forbidden("Verify your email address to use this feature.");
+  }
   return ctx;
 }
 
@@ -165,6 +295,7 @@ function organizationIsOpen(membership: WorkspaceMembership): boolean {
  */
 export async function requireWorkspaceAccess(workspaceSlug: string, minimumRole: MemberRole = "viewer"): Promise<WorkspaceContext> {
   const auth = await requireAuthOrRedirect(`/w/${workspaceSlug}`);
+  requireVerifiedEmail(auth);
   const membership = await getWorkspaceMembership(auth.user.id, workspaceSlug);
   if (!membership) notFound();
   if (!organizationIsOpen(membership)) forbidden();
@@ -172,9 +303,40 @@ export async function requireWorkspaceAccess(workspaceSlug: string, minimumRole:
   return { ...auth, membership };
 }
 
+/**
+ * The `AUTHENTICATED_VERIFIED` half of the state machine in §17, enforced in
+ * the one place every workspace page already passes through.
+ *
+ * Put here rather than in `proxy.ts` because the proxy sees a cookie, not an
+ * account: it cannot know whether the address behind that cookie is verified
+ * without a database read it is not allowed to do. Here the account has already
+ * been loaded, so the check costs nothing extra.
+ *
+ * ── Why this cannot loop ────────────────────────────────────────────────────
+ *
+ * `/verify-email` is reached through `requireAuthOrRedirect`, never through
+ * this guard, and it is in the proxy's authenticated set rather than its public
+ * one. So the only edge is protected-page -> /verify-email, and there is no
+ * edge back until `users.email_verified` is true - at which point this function
+ * stops redirecting at all.
+ *
+ * A deployment without Firebase never reaches the redirect either: accounts
+ * that predate this were grandfathered by migration 0029, and the built-in
+ * password path creates its accounts verified on purpose - it has no way to
+ * verify an address, so `false` there would mean "permanently stuck at
+ * /verify-email" rather than "unverified". See `PASSWORD_PATH_EMAIL_VERIFIED`.
+ */
+function requireVerifiedEmail(auth: AuthContext): void {
+  if (!auth.user.emailVerified) redirect("/verify-email");
+}
+
 /** For route handlers: same rules, expressed as ApiErrors. */
 export async function requireApiWorkspaceAccess(workspaceSlug: string, minimumRole: MemberRole = "viewer"): Promise<WorkspaceContext> {
   const auth = await requireApiAuth();
+  // Before the membership lookup, so an unverified caller gets the same answer
+  // whether or not the workspace exists - and cannot use the difference
+  // between 403 and 404 to find out which slugs are real.
+  if (!auth.user.emailVerified) throw ApiError.forbidden("Verify your email address to use this feature.");
   const membership = await getWorkspaceMembership(auth.user.id, workspaceSlug);
   if (!membership) throw ApiError.notFound("Workspace not found");
   // Checked before the role, so a suspended tenant gets the same answer

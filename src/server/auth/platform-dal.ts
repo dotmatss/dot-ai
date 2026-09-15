@@ -2,11 +2,11 @@ import "server-only";
 
 import { and, eq, isNull } from "drizzle-orm";
 
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
 import { ApiError } from "@/lib/api/api-error";
-import { requireApiAuth, requireAuthOrRedirect, type AuthContext } from "@/server/auth/dal";
+import { requireApiVerifiedAuth, requireAuthOrRedirect, type AuthContext } from "@/server/auth/dal";
 import { withDb } from "@/server/db/client";
 import { platformAdmins } from "@/server/db/schema";
 import { toIsoRequired } from "@/server/db/sql";
@@ -89,6 +89,12 @@ export async function isPlatformAdmin(userId: string): Promise<boolean> {
  */
 export async function requirePlatformAccess(): Promise<PlatformContext> {
   const auth = await requireAuthOrRedirect("/admin");
+  // The verification gate applies here too, and before the grant lookup: an
+  // operator account is the last one that should be reachable from an
+  // unconfirmed address. Checking first also keeps the answer identical for
+  // operators and non-operators, so the redirect cannot be used to discover
+  // whether an account holds a grant.
+  if (!auth.user.emailVerified) redirect("/verify-email");
   const grant = await getPlatformGrant(auth.user.id);
   if (!grant) notFound();
   return { ...auth, grant };
@@ -96,7 +102,7 @@ export async function requirePlatformAccess(): Promise<PlatformContext> {
 
 /** For route handlers under /api/admin. Same rules, expressed as ApiErrors. */
 export async function requireApiPlatformAccess(): Promise<PlatformContext> {
-  const auth = await requireApiAuth();
+  const auth = await requireApiVerifiedAuth();
   const grant = await getPlatformGrant(auth.user.id);
   if (!grant) throw ApiError.notFound();
   return { ...auth, grant };

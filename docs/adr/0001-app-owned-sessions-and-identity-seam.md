@@ -1,6 +1,6 @@
 # ADR 0001 — Authentication: app-owned sessions with a pluggable identity provider
 
-**Status:** Accepted (initial development phase) · **Date:** 2026-09-10
+**Status:** Accepted (initial development phase) · **Date:** 2026-09-10 · **Realized by [ADR 0007](0007-firebase-as-identity-provider.md)**
 
 ## Context
 
@@ -9,7 +9,7 @@ Firebase Authentication (including Google sign-in) is the intended identity prov
 ## Decision
 
 1. **Sessions are owned by the application.** A random 256-bit token is stored in an `HttpOnly`, `SameSite=Lax`, `Secure` (in production) cookie; the database stores only its SHA-256 hash (`sessions` table) with sliding expiry. Revocation is a row delete.
-2. **Identity providers are a seam, not the session.** `src/features/auth/server/auth-service.ts` exposes `authenticateWithPassword()` (local credentials, scrypt hashed) and `findOrCreateUserForIdentity()` for external providers, backed by the `user_identities` table. Firebase/Google plugs in by verifying an ID token server-side (firebase-admin) and calling `findOrCreateUserForIdentity({ provider: "firebase", providerUid, email, name })`, then creating the same application session.
+2. **Identity providers are a seam, not the session.** `src/features/auth/server/auth-service.ts` exposes `authenticateWithPassword()` (local credentials, scrypt hashed) and `findOrCreateUserForIdentity()` for external providers, backed by the `user_identities` table. Firebase/Google plugs in by verifying an ID token server-side and calling `findOrCreateUserForIdentity({ provider: "firebase", providerUid, email, name })`, then creating the same application session. (This happened — ADR 0007. The verification turned out to use Google's published JWKS with WebCrypto rather than `firebase-admin`, which cannot run on Cloudflare Workers; nothing else in this decision changed.)
 3. **Authorization lives in the Data Access Layer** (`src/server/auth/dal.ts`): `requireWorkspaceAccess()` for pages and `requireApiWorkspaceAccess()` for route handlers resolve membership and role on every request. `proxy.ts` only performs an optimistic cookie-presence redirect.
 
 ## Alternatives

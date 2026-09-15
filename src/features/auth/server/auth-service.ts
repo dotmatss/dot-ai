@@ -60,6 +60,25 @@ export interface RegistrationResult {
   workspaceSlug: string;
 }
 
+/**
+ * Why these accounts are created verified.
+ *
+ * This path only runs where no identity provider is configured, and it has no
+ * way to verify an address: there is no mail sender here, no verification token
+ * and no route that would consume one - §7 says that is Firebase's job, and
+ * building a second, weaker one to satisfy a column would be worse than not
+ * having it.
+ *
+ * So `false` would not mean "unverified", it would mean "permanently stuck":
+ * the gate in `requireWorkspaceAccess` would send every new account to
+ * /verify-email, which can do nothing without a Firebase identity to refresh.
+ *
+ * `true` is also exactly what migration 0029 decided for every account that
+ * already existed, and for the same reason - this path is the one that created
+ * them. Accounts made through Firebase get `false` and must really verify.
+ */
+const PASSWORD_PATH_EMAIL_VERIFIED = true;
+
 export async function registerUser(input: SignUpInput): Promise<RegistrationResult> {
   const existing = (await withDb((db) => db.select({ id: users.id }).from(users).where(eq(users.email, input.email)).limit(1)))[0];
   if (existing) {
@@ -68,7 +87,7 @@ export async function registerUser(input: SignUpInput): Promise<RegistrationResu
   const passwordHash = await hashPassword(input.password);
 
   return withTransaction(async (client) => {
-    const user = (await withDb((db) => db.insert(users).values({ email: input.email, name: input.name, passwordHash }).returning({ id: users.id, email: users.email, name: users.name }), client))[0];
+    const user = (await withDb((db) => db.insert(users).values({ email: input.email, name: input.name, passwordHash, emailVerified: PASSWORD_PATH_EMAIL_VERIFIED }).returning({ id: users.id, email: users.email, name: users.name }), client))[0];
     if (!user) throw new Error("Failed to create user");
     const organization = await insertOrganization(client, { name: input.organizationName, ownerId: user.id });
     const workspace = await insertWorkspace({ organizationId: organization.id, name: input.organizationName }, client);
@@ -93,7 +112,7 @@ export async function registerInvitedUser(input: InvitedSignUpInput): Promise<Re
   const passwordHash = await hashPassword(input.password);
 
   return withTransaction(async (client) => {
-    const user = (await withDb((db) => db.insert(users).values({ email: input.email, name: input.name, passwordHash }).returning({ id: users.id, email: users.email, name: users.name }), client))[0];
+    const user = (await withDb((db) => db.insert(users).values({ email: input.email, name: input.name, passwordHash, emailVerified: PASSWORD_PATH_EMAIL_VERIFIED }).returning({ id: users.id, email: users.email, name: users.name }), client))[0];
     if (!user) throw new Error("Failed to create user");
 
     const { organizationId } = await claimInvitation(client, input.invitationToken, user);
@@ -211,7 +230,9 @@ export async function findOrCreateUserForIdentity(identity: ExternalIdentity): P
     }
     if (!user) throw new Error("Failed to create user");
     const resolved = user;
-    await assertUserActive(resolved.id);
+    // Inside the transaction that may have just created this row, so the check
+    // has to run on the same connection - see `assertUserActive`.
+    await assertUserActive(resolved.id, client);
 
     // The unique constraint on (provider, provider_uid) is what actually makes
     // this idempotent: two concurrent first sign-ins produce one link row, and
